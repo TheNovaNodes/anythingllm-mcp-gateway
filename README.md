@@ -68,10 +68,16 @@ Add to `claude_desktop_config.json`:
 }
 ```
 
-#,# 💖 Support TheNovaNodes,
+## 💖 Support TheNovaNodes
 
-If our MCP gateways save you time and expand your AI agents' capabilities, consider supporting our infrastructure and the development of new open-source integrations.
-**USDT (TRC20): TQvw8MJMdSBFXu5G74JsZm1gzg7cuXBZ2o**
+Если наши MCP-шлюзы экономят вам время и расширяют возможности ваших AI-агентов, вы можете поддержать нашу лабораторию. Все средства идут на поддержку инфраструктуры и развитие новых open-source интеграций.
+**USDT (Сеть TRC20): TQvw8MJMdSBFXu5G74JsZm1gzg7cuXBZ2o**
+
+<details>
+<summary><b>Показать QR-код для перевода (Bybit)</b></summary>
+<br>
+<img src=".github/assets/image_2.png" alt="USDT TRC20 QR Code Bybit" width="300">
+</details>
 
 ## License
 
