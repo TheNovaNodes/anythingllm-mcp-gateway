@@ -1,0 +1,13 @@
+# Nova-AnythingLLM-MCP Dependencies
+# Core MCP SDK
+mcp>=1.0.0
+
+# HTTP client for AnythingLLM API
+requests>=2.28.0
+
+# SQLite for lexical search
+# (sqlite3 is built into Python standard library)
+
+# Optional: for development
+pytest>=7.0.0
+pytest-cov>=4.0.0
