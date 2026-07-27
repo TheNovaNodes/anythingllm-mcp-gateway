@@ -1,66 +1,78 @@
 # nova-anythingllm-mcp
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT/)
 [![MCP Server](https://img.shields.io/badge/MCP--Server-available-green)](https://modelcontextprotocol.io/)
 [![Status: Active](https://img.shields.io/badge/Status-Active-brightgreen)]
 
 ## About
 
-MCP (Model Context Protocol) server for AnythingLLM semantic memory integration. Provides seamless access to lab-scale vector storage through 13 workspace-isolated endpoints, enabling AI agents to search, retrieve and inject documents into AnythingLLM workspaces.
+MCP (Model Context Protocol) server for AnythingLLM semantic memory integration. Provides AI agents with tools to search, retrieve, and inject documents into AnythingLLM workspaces through a clean, typed API.
+
+## Tools
+
+| Tool | Description |
+|------|-------------|
+| `search_memory` | Hybrid semantic search (vector + lexical FTS5, RRF fusion with context assembly) |
+| `get_document` | Retrieve full raw text of a document by `doc_id` |
+| `gateway_health` | Diagnostics: token presence, lexical DB, vector layer reachability, search functionality |
 
 ## Features
 
-- **Vector Search**: Full-text semantic search across 13 configurable workspaces
-- **Workspace Isolation**: Each agent has dedicated workspace with private knowledge scope
-- **Document Upload**: Inject documents into AnythingLLM with automatic chunking
-- **Hybrid Search**: Vector similarity + lexical FTS5 ranking (RRF fusion)
-- **Context Assembly**: Expands search results to full paragraph context
-- **9 Tools Exposed**:
-  - `search_memory` — Hybrid semantic search
-  - `get_document` — Retrieve raw document content
-  - `list_workspaces` — Available workspace enumeration
-  - `gateway_health` — Diagnostics and connectivity check
+- **Hybrid Search** — vector similarity + lexical BM25 ranking, fused via score-calibrated weighted merge (NDCG-validated)
+- **Context Assembly** — expands search hits to full paragraph context for coherent agent input
+- **Workspace Isolation** — optional workspace scoping for multi-agent setups
+- **Gatekeeping** — real health probe that doesn't trust itself; reports degraded mode honestly
+- **Fan-out Throttle** — configurable concurrency limits on vector calls to protect ALM
 
 ## Installation
 
 ```bash
-# Clone repository
 git clone https://github.com/TheNovaNodes/nova-anythingllm-mcp.git
 cd nova-anythingllm-mcp
-
-# Create virtual environment
 python3 -m venv venv
 source venv/bin/activate
-
-# Install dependencies
 pip install -r requirements.txt
 ```
 
 ## Configuration
 
-Creates `.env` from `.env.example`:
+Copy `.env.example` to `.env` and fill in your values:
+
+```bash
+cp .env.example .env
+```
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `MG_AUTH_TOKEN` | Bearer token from AnythingLLM | Required |
-| `MG_WORKSPACE_ID` | Workspace numeric ID (1) | 1 |
-| `MG_EMBEDDING_MODEL` | Embedding model name | `multilingual-e5-small` |
-| `MG_VECTOR_THRESHOLD` | Min vector score (0.0-1.0) | 0.3 |
+| `MG_ALM_BASE` | AnythingLLM REST API endpoint | `http://127.0.0.1:3002/api/v1` |
+| `MG_TOKEN_FILE` | Path to AnythingLLM Bearer token file | **Required** (no default) |
+| `MG_OPS_DIR` | Operational directory for lexical index | `./ops` |
+| `MG_LEXICAL_DB` | FTS5/BM25 lexical database path | `{MG_OPS_DIR}/lexical.db` |
+| `MG_MAP_FILE` | Workspace slug mappings file | `{MG_OPS_DIR}/workspace_map.json` |
+| `MG_VECTOR_SCORE_THRESHOLD` | Min vector score to accept (0.0–1.0) | `0.13` |
+| `MG_DEFAULT_TOP_K` | Default number of search results | `5` |
+| `MG_MAX_TOP_K` | Maximum search results per query | `25` |
+| `MG_FUSION_MODE` | `weighted` or `rrf` | `weighted` |
+| `MG_HOST` | MCP server host (streamable-http transport) | `127.0.0.1` |
+| `MG_PORT` | MCP server port | `8091` |
+| `MG_TRANSPORT` | `stdio` or `streamable-http` | `stdio` |
+| `MG_LOG_LEVEL` | Logging level | `INFO` |
 
 ## MCP Client Integration
 
-Add to `claude_desktop_config.json`:
+Add to your MCP client config (e.g. `claude_desktop_config.json`):
 
 ```json
 {
   "mcpServers": {
-    "nova-anythingllm": {
+    "nova-anythingllm-mcp": {
       "command": "python",
-      "args": ["server.py"],
+      "args": ["-m", "memory_gateway.server"],
       "cwd": "/path/to/nova-anythingllm-mcp",
       "env": {
-        "MG_AUTH_TOKEN": "your-bearer-token",
+        "MG_TOKEN_FILE": "/path/to/your/anythingllm_token.txt",
+        "MG_ALM_BASE": "http://127.0.0.1:3002/api/v1",
         "PYTHONPATH": "/path/to/nova-anythingllm-mcp"
       }
     }
@@ -68,16 +80,14 @@ Add to `claude_desktop_config.json`:
 }
 ```
 
-## 💖 Support TheNovaNodes
+## Transport
 
-Если наши MCP-шлюзы экономят вам время и расширяют возможности ваших AI-агентов, вы можете поддержать нашу лабораторию. Все средства идут на поддержку инфраструктуры и развитие новых open-source интеграций.
-**USDT (Сеть TRC20): TQvw8MJMdSBFXu5G74JsZm1gzg7cuXBZ2o**
+| Transport | Use case |
+|-----------|----------|
+| `stdio` | Default — run as subprocess from MCP client config |
+| `streamable-http` | Network deployment — runs on `MG_HOST:MG_PORT` |
 
-<details>
-<summary><b>Показать QR-код для перевода (Bybit)</b></summary>
-<br>
-<img src=".github/assets/image_2.png" alt="USDT TRC20 QR Code Bybit" width="300">
-</details>
+## License
 
 ## License
 

@@ -10,22 +10,20 @@ ALM_BASE = os.environ.get("MG_ALM_BASE", "http://127.0.0.1:3002/api/v1")
 
 # ── Секреты (600) ──────────────────────────────────────────────────────
 # Системный Bearer-токен AnythingLLM для vector-search.
-TOKEN_FILE = os.environ.get(
-    "MG_TOKEN_FILE",
-    "/root/LabDoctorM/vault/anythingllm_token.txt",
-)
+TOKEN_FILE = os.environ.get("MG_TOKEN_FILE")
+if not TOKEN_FILE and "MG_AUTH_TOKEN" in os.environ:
+    # Legacy alias — убрать в следующем мажорном релизе
+    TOKEN_FILE = os.environ.get("MG_AUTH_TOKEN")
 
 # ── Операционная директория (лексический слой) ─────────────────────────
-OPS_DIR = os.environ.get(
-    "MG_OPS_DIR", "/root/LabDoctorM/.ops/shared/anythingllm-sync"
-)
+_repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+OPS_DIR = os.environ.get("MG_OPS_DIR", os.path.join(_repo_root, "ops", "shared", "anythingllm-sync"))
 # FTS5/BM25 индекс по .md-корпусу лаборатории (read-only доступ).
 LEXICAL_DB = os.environ.get("MG_LEXICAL_DB", os.path.join(OPS_DIR, "lexical.db"))
 # Локальный список слагов workspace (быстрее и без прав на /workspaces).
-MAP_FILE = os.environ.get(
-    "MG_MAP_FILE",
-    "/root/LabDoctorM/vault/anythingllm_workspaces.map",
-)
+MAP_FILE = os.environ.get("MG_MAP_FILE")
+if not MAP_FILE:
+    MAP_FILE = os.path.join(OPS_DIR, "workspace_map.json")
 
 # ── Таймауты (сек) ─────────────────────────────────────────────────────
 LIST_TIMEOUT = float(os.environ.get("MG_LIST_TIMEOUT", "15"))
