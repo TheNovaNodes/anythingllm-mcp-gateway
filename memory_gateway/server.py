@@ -8,6 +8,7 @@
 Только сырые данные. Никаких /chat и LLM-прослоек.
 Транспорт: MG_TRANSPORT=stdio (по умолчанию) | streamable-http (сетевой деплой).
 """
+__version__ = "1.0.0"
 import os
 import time
 from typing import Any, Dict, Optional

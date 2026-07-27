@@ -122,7 +122,11 @@ def _load_workspace_map() -> List[Dict[str, Any]]:
     if _WORKSPACE_MAP is not None:
         return _WORKSPACE_MAP
     try:
-        with open('/root/LabDoctorM/.ops/shared/anythingllm-sync/workspace_map.json', "r", encoding="utf-8") as f:
+        _map_path = os.environ.get(
+            "MG_MAP_FILE",
+            os.path.join(config.OPS_DIR, "workspace_map.json"),
+        )
+        with open(_map_path, "r", encoding="utf-8") as f:
             _WORKSPACE_MAP = json.load(f)
     except Exception as e:
         log.warning("D1: failed to load workspace_map.json: %s", e)
