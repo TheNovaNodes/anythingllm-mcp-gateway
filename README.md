@@ -27,12 +27,20 @@ MCP (Model Context Protocol) server for AnythingLLM semantic memory integration.
 
 ## Installation
 
+### From PyPI
+
+```bash
+pip install nova-memory-gateway
+```
+
+### Development
+
 ```bash
 git clone https://github.com/TheNovaNodes/nova-anythingllm-mcp.git
 cd nova-anythingllm-mcp
 python3 -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
+pip install -e .
 ```
 
 ## Configuration
