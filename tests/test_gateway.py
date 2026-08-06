@@ -64,6 +64,18 @@ class TestMemoryGateway(unittest.TestCase):
         self.assertLessEqual(res["total_estimated_tokens"], 150)
         self.assertTrue(res["count"] > 0)
 
+    def test_temporal_decay_calculation(self):
+        # Existing file should have decay factor <= 1.0
+        decay = search._calculate_temporal_decay(self.token_file)
+        self.assertGreaterEqual(decay, 0.6)
+        self.assertLessEqual(decay, 1.0)
+
+    def test_extract_related_docs(self):
+        sample_text = "See [architecture](docs/arch.md) and import os\nfrom memory_gateway.search import hybrid_search"
+        related = search._extract_related_docs(sample_text)
+        self.assertIn("docs/arch.md", related)
+        self.assertIn("memory_gateway/search.py", related)
+
 
 if __name__ == "__main__":
     unittest.main()

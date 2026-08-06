@@ -382,10 +382,7 @@ def _dedup_key(item: Dict[str, Any]) -> str:
 
 
 def _minmax(vals: List[float]) -> Dict[float, float]:
-    """Min-max нормализация списка в 0..1.
-    Одно значение (или все равны) -> 1.0 (single candidate = «лучший»,
-    иначе min-max даёт 0.0 и результат отсекался бы порогом).
-    """
+    """Min-max нормализация списка в 0..1."""
     if not vals:
         return {}
     lo, hi = min(vals), max(vals)
@@ -394,14 +391,50 @@ def _minmax(vals: List[float]) -> Dict[float, float]:
     return {v: (v - lo) / (hi - lo) for v in vals}
 
 
-def _fuse_weighted(vector_hits, lexical_hits, top_k):
-    """Score-calibrated fusion (P1).
+import math
 
-    Нормализует vector-cosine(уже 0..1) и lexical-BM25(отриц., чем меньше
-    тем лучше) в общую 0..1 шкалу, затем взвешенная сумма
-    α·vec + (1-α)·lex. Дедуп по basename (как в RRF). Совокупный порог
-    FUSION_MIN_COMBINED отсекает чистый lexical-шум (высокий BM25 по
-    коротким OR-токенам при слабом/нулевом векторе).
+def _calculate_temporal_decay(doc_id: str) -> float:
+
+    """Issue #8: Temporal Decay Scaling.
+    Calculates recency factor exp(-0.005 * delta_days) based on doc mtime.
+    Returns float multiplier in range 0.6..1.0.
+    """
+    if not doc_id:
+        return 1.0
+    try:
+        if os.path.exists(doc_id):
+            mtime = os.path.getmtime(doc_id)
+            delta_days = max(0.0, (time.time() - mtime) / 86400.0)
+            return max(0.6, math.exp(-0.005 * delta_days))
+    except Exception:
+        pass
+    return 1.0
+
+
+def _extract_related_docs(text: str) -> List[str]:
+    """Issue #11: Cross-Document Dependency Graphing.
+    Extracts markdown file links [label](path.md) and Python import paths.
+    """
+    if not text:
+        return []
+    related = []
+    # Markdown links
+    for match in re.findall(r"\[.*?\]\(([\w\.\/\-]+\.(?:md|py|json|txt|sql))\)", text):
+        if match not in related:
+            related.append(match)
+    # Python imports
+    for match in re.findall(r"^(?:from|import)\s+([\w\.]+)", text, re.MULTILINE):
+        rel_path = match.replace(".", "/") + ".py"
+        if rel_path not in related:
+            related.append(rel_path)
+    return related[:5]
+
+
+def _fuse_weighted(vector_hits, lexical_hits, top_k):
+    """Score-calibrated fusion (P1) + Temporal Decay Scaling (Issue #8).
+
+    Нормализует vector-cosine и lexical-BM25 в общую 0..1 шкалу,
+    применяет временное затухание (Temporal Decay) для отдачи предпочтения свежим файлам.
     """
     alpha = config.FUSION_VECTOR_WEIGHT
     v_scores = [float(h.get("vector_score") or 0.0) for h in vector_hits]
@@ -410,7 +443,7 @@ def _fuse_weighted(vector_hits, lexical_hits, top_k):
     l_norm = _minmax(l_scores)
 
     fused: Dict[str, Dict[str, Any]] = {}
-    for hits, norms, weight in (  # (список хитов, норм. скоры, вес слоя)
+    for hits, norms, weight in (
         (vector_hits, [v_norm.get(s, 0.0) for s in v_scores], alpha),
         (lexical_hits, [l_norm.get(s, 0.0) for s in l_scores], 1.0 - alpha),
     ):
@@ -420,8 +453,9 @@ def _fuse_weighted(vector_hits, lexical_hits, top_k):
                 continue
             entry = fused.get(key)
             if entry is None:
+                doc_id = h.get("doc_id")
                 entry = {
-                    "doc_id": h.get("doc_id"),
+                    "doc_id": doc_id,
                     "title": h.get("title"),
                     "workspace": h.get("workspace"),
                     "text": h.get("text", ""),
@@ -429,6 +463,7 @@ def _fuse_weighted(vector_hits, lexical_hits, top_k):
                     "vector_score": None,
                     "lexical_score": None,
                     "fused_score": 0.0,
+                    "temporal_decay": _calculate_temporal_decay(str(doc_id or "")),
                 }
                 fused[key] = entry
             entry["fused_score"] += weight * sc
@@ -446,11 +481,16 @@ def _fuse_weighted(vector_hits, lexical_hits, top_k):
             if "/" in str(h.get("doc_id", "")) and "/" not in str(entry["doc_id"] or ""):
                 entry["doc_id"] = h["doc_id"]
 
+    for entry in fused.values():
+        entry["fused_score"] *= entry.get("temporal_decay", 1.0)
+        entry["related_doc_ids"] = _extract_related_docs(entry.get("text", ""))
+
     ordered = [e for e in fused.values() if e["fused_score"] >= config.FUSION_MIN_COMBINED]
     ordered.sort(key=lambda e: e["fused_score"], reverse=True)
     for e in ordered:
         e["rrf_score"] = round(e.pop("fused_score"), 6)
     return ordered[:top_k]
+
 
 
 def rrf_merge(vector_hits: List[Dict[str, Any]],
