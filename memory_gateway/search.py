@@ -62,6 +62,13 @@ def load_token() -> str:
         if _token_cache:
             return _token_cache
         path = config.TOKEN_FILE
+        if not path:
+            # Fallback to MG_AUTH_TOKEN or ANYTHINGLLM_API_KEY from environment
+            path = os.environ.get("ANYTHINGLLM_API_KEY") or os.environ.get("MG_AUTH_TOKEN")
+            if path:
+                _token_cache = path.strip()
+                return _token_cache
+            raise RuntimeError("MG_TOKEN_FILE environment variable is not configured")
         if not os.path.exists(path):
             raise RuntimeError(f"token file not found: {path}")
         # Мягкая проверка прав: секрет не должен быть мир-читаемым.
@@ -77,6 +84,7 @@ def load_token() -> str:
             raise RuntimeError(f"token file empty: {path}")
         _token_cache = tok
         return tok
+
 
 
 # ── Список слагов workspace ─────────────────────────────────────────────
@@ -496,7 +504,9 @@ def rrf_merge(vector_hits: List[Dict[str, Any]],
 def hybrid_search(query: str, top_k: int,
                   workspace: Optional[str] = None,
                   expand_context: bool = config.EXPAND_CONTEXT_DEFAULT,
-                  fusion: Optional[str] = None) -> Dict[str, Any]:
+                  fusion: Optional[str] = None,
+                  max_token_budget: Optional[int] = None,
+                  tier: Optional[str] = None) -> Dict[str, Any]:
     """Гибрид: vector + lexical ПАРАЛЛЕЛЬНО, слияние. Возвращает чистый JSON.
 
     degraded=True, если один из слоёв недоступен (второй всё равно вернёт данные).
@@ -536,13 +546,96 @@ def hybrid_search(query: str, top_k: int,
     if expand_context:
         for r in results:
             _expand_result(r)
+
+    # Adaptive Token Budgeting (P3): trim context results cleanly if token budget specified
+    total_tokens = 0
+    if max_token_budget and max_token_budget > 0:
+        trimmed_results = []
+        for r in results:
+            text = r.get("text", "")
+            est_tokens = max(1, len(text) // 4)
+            if total_tokens + est_tokens <= max_token_budget:
+                trimmed_results.append(r)
+                total_tokens += est_tokens
+            else:
+                # Partial sentence boundary trimming
+                remaining_tokens = max_token_budget - total_tokens
+                allowed_chars = remaining_tokens * 4
+                if allowed_chars > 50:
+                    sub_text = text[:allowed_chars].rsplit(" ", 1)[0] + "..."
+                    r["text"] = sub_text
+                    r["trimmed_to_budget"] = True
+                    trimmed_results.append(r)
+                    total_tokens += remaining_tokens
+                break
+        results = trimmed_results
+
     return {
         "query": query,
         "count": len(results),
         "results": results,
         "degraded": not (vec_ok and lex_ok),
         "layers": {"vector": len(vector_hits), "lexical": len(lexical_hits)},
+        "total_estimated_tokens": total_tokens
     }
+
+
+def store_memory(content: str, title: Optional[str] = None, workspace: Optional[str] = "dmagybot",
+                 metadata: Optional[Dict[str, Any]] = None, tier: Optional[str] = "semantic") -> Dict[str, Any]:
+    """Инструмент активной записи памяти (Issue #7). Загружает сырой текст в AnythingLLM и добавляет эмбеддинги."""
+    if not content or not content.strip():
+        return {"success": False, "error": "empty content"}
+
+    tok = load_token()
+    clean_title = (title or f"memory_{int(time.time())}.txt").strip()
+    meta = metadata or {}
+    meta.update({
+        "title": clean_title,
+        "tier": tier or "semantic",
+        "stored_at": time.strftime("%Y-%m-%dT%H:%M:%SZ")
+    })
+
+    try:
+        r = requests.post(
+            f"{config.ALM_BASE}/document/raw-text",
+            headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json"},
+            json={"textContent": content, "metadata": meta},
+            timeout=config.SEARCH_TIMEOUT
+        )
+        if not r.ok:
+            return {"success": False, "error": f"Upload HTTP {r.status_code}: {r.text}"}
+
+        doc_data = r.json()
+        docs = doc_data.get("documents", [])
+        if not docs:
+            return {"success": False, "error": "No document returned by AnythingLLM upload"}
+
+        location = docs[0].get("location")
+        doc_id = docs[0].get("id")
+
+        target_ws = workspace or "dmagybot"
+        ws_r = requests.post(
+            f"{config.ALM_BASE}/workspace/{target_ws}/update-embeddings",
+            headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json"},
+            json={"adds": [location]},
+            timeout=config.SEARCH_TIMEOUT
+        )
+        if not ws_r.ok:
+            return {"success": False, "error": f"Workspace embedding HTTP {ws_r.status_code}"}
+
+        log.info("store_memory success title=%r workspace=%s doc_id=%s", clean_title, target_ws, doc_id)
+        return {
+            "success": True,
+            "doc_id": doc_id,
+            "title": clean_title,
+            "location": location,
+            "workspace": target_ws,
+            "tier": tier
+        }
+    except Exception as e:
+        log.exception("store_memory failed")
+        return {"success": False, "error": str(e)}
+
 
 
 # ── get_document: полный сырой текст документа ──────────────────────────
