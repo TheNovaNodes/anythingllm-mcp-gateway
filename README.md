@@ -1,4 +1,4 @@
-# nova-anythingllm-mcp
+# nova-anythingllm-mcp 🧠
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT/)
@@ -7,23 +7,26 @@
 
 ## About
 
-MCP (Model Context Protocol) server for AnythingLLM semantic memory integration. Provides AI agents with tools to search, retrieve, and inject documents into AnythingLLM workspaces through a clean, typed API.
+High-performance **Model Context Protocol (MCP)** server for AnythingLLM semantic memory integration (`TheNovaNodes/nova-anythingllm-mcp`). Provides AI agents with tools to search, retrieve, and actively store memory facts and documents into AnythingLLM workspaces through a clean, typed MCP API.
 
-## Tools
+## Exposed MCP Tools
 
 | Tool | Description |
 |------|-------------|
-| `search_memory` | Hybrid semantic search (vector + lexical FTS5, RRF fusion with context assembly) |
+| `search_memory` | Hybrid semantic search (vector + lexical FTS5, RRF fusion, Context Assembly, Adaptive Token Budgeting) |
+| `store_memory` | **Active Write Tool**: Upload raw facts, session summaries, and text directly into AnythingLLM vector memory |
 | `get_document` | Retrieve full raw text of a document by `doc_id` |
-| `gateway_health` | Diagnostics: token presence, lexical DB, vector layer reachability, search functionality |
+| `gateway_health` | Honest diagnostics: token presence, lexical DB, vector layer reachability, real hybrid search probe |
 
-## Features
+## Key Features
 
-- **Hybrid Search** — vector similarity + lexical BM25 ranking, fused via score-calibrated weighted merge (NDCG-validated)
-- **Context Assembly** — expands search hits to full paragraph context for coherent agent input
-- **Workspace Isolation** — optional workspace scoping for multi-agent setups
-- **Gatekeeping** — real health probe that doesn't trust itself; reports degraded mode honestly
-- **Fan-out Throttle** — configurable concurrency limits on vector calls to protect ALM
+- **Active Memory Ingestion (`store_memory`)** — AI agents can write new facts, preferences, and documentation into AnythingLLM workspaces in real time.
+- **Adaptive Token Budgeting** — Respects agent context budgets (`max_token_budget`), trimming passages cleanly on paragraph/sentence boundaries.
+- **Hybrid Search** — Vector similarity + lexical BM25 ranking, fused via score-calibrated weighted merge (NDCG-validated).
+- **Context Assembly** — Expands search hits to full paragraph context for coherent agent reasoning.
+- **Workspace Isolation** — Optional workspace scoping for multi-agent setups.
+- **Gatekeeping & Diagnostics** — Real health probe that tests hybrid search execution and reports degraded mode honestly.
+- **Fan-out Throttle** — Configurable concurrency limits on vector calls to protect AnythingLLM instance.
 
 ## Installation
 
@@ -54,7 +57,7 @@ cp .env.example .env
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `MG_ALM_BASE` | AnythingLLM REST API endpoint | `http://127.0.0.1:3002/api/v1` |
-| `MG_TOKEN_FILE` | Path to AnythingLLM Bearer token file | **Required** (no default) |
+| `MG_TOKEN_FILE` | Path to AnythingLLM Bearer token file | **Required** (or `ANYTHINGLLM_API_KEY`) |
 | `MG_OPS_DIR` | Operational directory for lexical index | `./ops` |
 | `MG_LEXICAL_DB` | FTS5/BM25 lexical database path | `{MG_OPS_DIR}/lexical.db` |
 | `MG_MAP_FILE` | Workspace slug mappings file | `{MG_OPS_DIR}/workspace_map.json` |
@@ -79,23 +82,19 @@ Add to your MCP client config (e.g. `claude_desktop_config.json`):
       "args": ["-m", "memory_gateway.server"],
       "cwd": "/path/to/nova-anythingllm-mcp",
       "env": {
-        "MG_TOKEN_FILE": "/path/to/your/anythingllm_token.txt",
-        "MG_ALM_BASE": "http://127.0.0.1:3002/api/v1",
-        "PYTHONPATH": "/path/to/nova-anythingllm-mcp"
+        "ANYTHINGLLM_API_KEY": "YOUR_ANYTHINGLLM_API_KEY",
+        "MG_ALM_BASE": "http://127.0.0.1:3002/api/v1"
       }
     }
   }
 }
 ```
 
-## Transport
+## Running Tests
 
-| Transport | Use case |
-|-----------|----------|
-| `stdio` | Default — run as subprocess from MCP client config |
-| `streamable-http` | Network deployment — runs on `MG_HOST:MG_PORT` |
-
-## License
+```bash
+python3 -m unittest discover -s tests
+```
 
 ## License
 

@@ -26,7 +26,9 @@ mcp = FastMCP("memory-gateway", host=config.HOST, port=config.PORT)
 @mcp.tool(name="search_memory")
 def search_memory(query: str, top_k: int = config.DEFAULT_TOP_K,
                   workspace: Optional[str] = None,
-                  expand_context: bool = config.EXPAND_CONTEXT_DEFAULT) -> Dict[str, Any]:
+                  expand_context: bool = config.EXPAND_CONTEXT_DEFAULT,
+                  max_token_budget: Optional[int] = None,
+                  tier: Optional[str] = None) -> Dict[str, Any]:
     """Гибридный семантический поиск по памяти лаборатории (vector + lexical, RRF).
 
     Args:
@@ -35,18 +37,23 @@ def search_memory(query: str, top_k: int = config.DEFAULT_TOP_K,
         workspace: опционально — ограничить векторный слой одним слагом workspace.
         expand_context: если True (по умолчанию), каждый найденный пассаж
             расширяется до связного блока — подтягиваются соседние абзацы того
-            же документа (Context Assembly), чтобы не отдавать изолированный
-            чанк, оборванный на полуслове.
+            же документа (Context Assembly).
+        max_token_budget: опционально — максимальный бюджет токенов вывода (Adaptive Token Budgeting).
+        tier: опционально — иерархический уровень памяти ('episodic', 'semantic', 'procedural').
 
     Returns:
-        Чистый JSON: {query, count, results[], degraded, layers}. Без LLM-синтеза.
-        Каждый результат: {doc_id, title, workspace, text, sources[],
-                           vector_score, lexical_score, rrf_score,
-                           context_expanded, expanded_chars, original_chars}.
+        Чистый JSON: {query, count, results[], degraded, layers, total_estimated_tokens}.
     """
     t0 = time.time()
     try:
-        out = search.hybrid_search(query, top_k, workspace, expand_context)
+        out = search.hybrid_search(
+            query=query,
+            top_k=top_k,
+            workspace=workspace,
+            expand_context=expand_context,
+            max_token_budget=max_token_budget,
+            tier=tier
+        )
     except Exception as e:  # noqa: BLE001 — инструмент не должен ронять сервер
         log.exception("search_memory failed")
         return {"query": query, "count": 0, "results": [], "degraded": True,
@@ -56,6 +63,40 @@ def search_memory(query: str, top_k: int = config.DEFAULT_TOP_K,
              (query or "")[:80], top_k, out.get("count"), out.get("degraded"),
              out["latency_ms"])
     return out
+
+
+@mcp.tool(name="store_memory")
+def store_memory(content: str, title: Optional[str] = None,
+                 workspace: Optional[str] = "dmagybot",
+                 metadata: Optional[Dict[str, Any]] = None,
+                 tier: Optional[str] = "semantic") -> Dict[str, Any]:
+    """Сохранение новых фактов, диалогов и знаний в семантическую память (Issue #7).
+
+    Args:
+        content: текст знания, факта или заметки для сохранения.
+        title: заголовок/имя файла знания (например, 'user_preferences.txt').
+        workspace: целевой воркспейс в AnythingLLM (по умолчанию 'dmagybot').
+        metadata: дополнительные метаданные в формате словаря.
+        tier: иерархический уровень памяти ('episodic', 'semantic', 'procedural').
+
+    Returns:
+        Чистый JSON: {success, doc_id, title, location, workspace, tier}.
+    """
+    t0 = time.time()
+    try:
+        res = search.store_memory(
+            content=content,
+            title=title,
+            workspace=workspace,
+            metadata=metadata,
+            tier=tier
+        )
+        res["latency_ms"] = round((time.time() - t0) * 1000.0, 1)
+        return res
+    except Exception as e:
+        log.exception("store_memory failed")
+        return {"success": False, "error": f"{type(e).__name__}: {e}"}
+
 
 
 @mcp.tool(name="get_document")
