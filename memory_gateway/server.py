@@ -13,14 +13,24 @@ import os
 import time
 from typing import Any, Dict, Optional
 
-from mcp.server.fastmcp import FastMCP
+try:
+    from mcp.server.fastmcp import FastMCP
+except ImportError:
+    try:
+        from fastmcp import FastMCP
+    except ImportError:
+        from mcp.server.mcpserver import MCPServer as FastMCP
 
 from . import config, search
 from .logger import get_logger
 
 log = get_logger()
 
-mcp = FastMCP("memory-gateway", host=config.HOST, port=config.PORT)
+try:
+    mcp = FastMCP("anythingllm-mcp-gateway", host=config.HOST, port=config.PORT)
+except TypeError:
+    mcp = FastMCP("anythingllm-mcp-gateway")
+
 
 
 @mcp.tool(name="search_memory")

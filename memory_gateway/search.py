@@ -21,7 +21,7 @@ from .logger import get_logger
 log = get_logger()
 
 # P4: throttle concurrent ALM calls (fan-out protection).
-# One semaphore per process: caps simultaneous /vector-search to :3002.
+# One semaphore per process: caps simultaneous /vector-search to AnythingLLM.
 _ALM_SEM = threading.Semaphore(max(1, int(config.VECTOR_MAX_INFLIGHT)))
 # Lightweight ALM latency telemetry (last/p50/p95 ms), thread-safe.
 _ALM_LATENCY = []

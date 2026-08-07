@@ -1,4 +1,4 @@
-# 📐 nova-memory-gateway Architecture & Design Specification
+# 📐 anythingllm-mcp-gateway Architecture & Design Specification
 
 > **Автор**: Trickster (`trickster@labdoctorm.ru`)  
 > **Организация**: TheNovaNodes  
@@ -9,7 +9,7 @@
 
 ## 🏛️ 1. Обзор архитектуры шлюза
 
-**`nova-memory-gateway`** (`TheNovaNodes/nova-anythingllm-mcp`) — это промышленный шлюз по протоколу **Model Context Protocol (MCP)**, обеспечивающий высокопроизводительный доступ агентов ИИ к семантической памяти.
+**`anythingllm-mcp-gateway`** (`TheNovaNodes/anythingllm-mcp-gateway`) — это промышленный шлюз по протоколу **Model Context Protocol (MCP)**, обеспечивающий высокопроизводительный доступ агентов ИИ к семантической памяти.
 
 ```
                                ┌─────────────────────────┐
@@ -18,7 +18,7 @@
                                             │ (FastMCP JSON-RPC)
                                             ▼
                                ┌─────────────────────────┐
-                               │   nova-memory-gateway   │
+                               │ anythingllm-mcp-gateway │
                                │        (v0.2.0)         │
                                └────────────┬────────────┘
                                             │

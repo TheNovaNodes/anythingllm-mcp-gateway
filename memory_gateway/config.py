@@ -6,7 +6,7 @@
 import os
 
 # ── AnythingLLM REST API (только официальный API, Bearer) ──────────────
-ALM_BASE = os.environ.get("MG_ALM_BASE", "http://127.0.0.1:3002/api/v1")
+ALM_BASE = os.environ.get("MG_ALM_BASE", "http://127.0.0.1:3001/api/v1")
 
 # ── Секреты (600) ──────────────────────────────────────────────────────
 # Системный Bearer-токен AnythingLLM для vector-search.
