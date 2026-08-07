@@ -1,4 +1,4 @@
-# nova-anythingllm-mcp 🧠
+# anythingllm-mcp-gateway 🧠
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT/)
@@ -7,7 +7,7 @@
 
 ## About
 
-High-performance **Model Context Protocol (MCP)** server for AnythingLLM semantic memory integration (`TheNovaNodes/nova-anythingllm-mcp`). Provides AI agents with tools to search, retrieve, and actively store memory facts and documents into AnythingLLM workspaces through a clean, typed MCP API.
+High-performance **Model Context Protocol (MCP)** server for AnythingLLM semantic memory integration (`TheNovaNodes/anythingllm-mcp-gateway`). Provides AI agents with tools to search, retrieve, and actively store memory facts and documents into AnythingLLM workspaces through a clean, typed MCP API.
 
 ## Exposed MCP Tools
 
@@ -33,14 +33,14 @@ High-performance **Model Context Protocol (MCP)** server for AnythingLLM semanti
 ### From PyPI
 
 ```bash
-pip install nova-memory-gateway
+pip install anythingllm-mcp-gateway
 ```
 
 ### Development
 
 ```bash
-git clone https://github.com/TheNovaNodes/nova-anythingllm-mcp.git
-cd nova-anythingllm-mcp
+git clone https://github.com/TheNovaNodes/anythingllm-mcp-gateway.git
+cd anythingllm-mcp-gateway
 python3 -m venv venv
 source venv/bin/activate
 pip install -e .
@@ -54,9 +54,9 @@ Copy `.env.example` to `.env` and fill in your values:
 cp .env.example .env
 ```
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `MG_ALM_BASE` | AnythingLLM REST API endpoint | `http://127.0.0.1:3002/api/v1` |
+| Variable | Description | Default / Example |
+|----------|-------------|-------------------|
+| `MG_ALM_BASE` | AnythingLLM REST API endpoint (Local: `http://127.0.0.1:3001/api/v1`, Prod: `https://alm.shtab-ai.ru/api/v1`) | `http://127.0.0.1:3001/api/v1` |
 | `MG_TOKEN_FILE` | Path to AnythingLLM Bearer token file | **Required** (or `ANYTHINGLLM_API_KEY`) |
 | `MG_OPS_DIR` | Operational directory for lexical index | `./ops` |
 | `MG_LEXICAL_DB` | FTS5/BM25 lexical database path | `{MG_OPS_DIR}/lexical.db` |
@@ -77,18 +77,20 @@ Add to your MCP client config (e.g. `claude_desktop_config.json`):
 ```json
 {
   "mcpServers": {
-    "nova-anythingllm-mcp": {
+    "anythingllm-mcp-gateway": {
       "command": "python",
       "args": ["-m", "memory_gateway.server"],
-      "cwd": "/path/to/nova-anythingllm-mcp",
+      "cwd": "/path/to/anythingllm-mcp-gateway",
       "env": {
         "ANYTHINGLLM_API_KEY": "YOUR_ANYTHINGLLM_API_KEY",
-        "MG_ALM_BASE": "http://127.0.0.1:3002/api/v1"
+        "MG_ALM_BASE": "http://127.0.0.1:3001/api/v1"
       }
     }
   }
 }
 ```
+
+> **Note**: For production environments, point `MG_ALM_BASE` to `https://alm.shtab-ai.ru/api/v1`.
 
 ## Running Tests
 

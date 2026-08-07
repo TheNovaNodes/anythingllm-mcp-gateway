@@ -1,4 +1,4 @@
-# Nova-AnythingLLM-MCP Dependencies
+# anythingllm-mcp-gateway Dependencies
 # Core MCP SDK
 mcp>=1.0.0
 
