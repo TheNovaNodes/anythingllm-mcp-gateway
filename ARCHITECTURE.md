@@ -1,15 +1,15 @@
 # 📐 anythingllm-mcp-gateway Architecture & Design Specification
 
-> **Автор**: Trickster (`trickster@labdoctorm.ru`)  
-> **Организация**: TheNovaNodes  
-> **Версия**: v0.2.0 (Product-Ready)  
-> **Стек**: Python 3.10+ / FastMCP / SQLite FTS5 / AnythingLLM REST API
+> **Author**: Trickster (`trickster@labdoctorm.ru`)
+> **Organization**: TheNovaNodes
+> **Version**: v0.2.0 (Product-Ready)
+> **Stack**: Python 3.10+ / FastMCP / SQLite FTS5 / AnythingLLM REST API
 
 ---
 
-## 🏛️ 1. Обзор архитектуры шлюза
+## 🏛️ 1. Gateway Architecture Overview
 
-**`anythingllm-mcp-gateway`** (`TheNovaNodes/anythingllm-mcp-gateway`) — это промышленный шлюз по протоколу **Model Context Protocol (MCP)**, обеспечивающий высокопроизводительный доступ агентов ИИ к семантической памяти.
+**`anythingllm-mcp-gateway`** (`TheNovaNodes/anythingllm-mcp-gateway`) is an industrial-grade gateway using the **Model Context Protocol (MCP)**, providing high-performance access to semantic memory for AI agents.
 
 ```
                                ┌─────────────────────────┐
@@ -44,51 +44,51 @@
 
 ---
 
-## 🔬 2. Математические и алгоритмические модели
+## 🔬 2. Mathematical and Algorithmic Models
 
 ### 2.1. Score-Calibrated Weighted Fusion
-Вместо базового RRF, приводящего позиции к $1/(k+rank)$, шлюз применяет скоринговую нормализацию в диапазоне $[0, 1]$:
+Instead of standard RRF, which normalizes positions to $1/(k+rank)$, the gateway applies a score normalization in the range of $[0, 1]$:
 
 $$S_{fused} = \alpha \cdot \text{MinMax}(S_{vec}) + (1 - \alpha) \cdot \text{MinMax}(S_{lex})$$
 
-Где $\alpha = 0.6$ по умолчанию, отдавая небольшой приоритет семантическому вектору, но сохраняя вес точных лексических совпадений FTS5.
+Where $\alpha = 0.6$ by default, giving a slight priority to the semantic vector while maintaining the weight of exact lexical matches from FTS5.
 
-### 2.2. Temporal Decay Scaling (Учет свежести документов)
-Для защиты агента от использования устаревших кодовых правил и решений к итоговому скору применяется экспоненциальный коэффициент затухания:
+### 2.2. Temporal Decay Scaling
+To prevent the agent from using outdated code rules and decisions, an exponential decay factor is applied to the final score:
 
 $$D_{temporal} = \max\left(0.6, \exp(-\lambda \cdot \Delta t_{days})\right)$$
 
-где $\lambda = 0.005$. Документ, созданный сегодня, получает значение $1.0$, а документ полугодовой давности плавно снижает свой вес до пороговых $0.6$.
+where $\lambda = 0.005$. A document created today gets a value of $1.0$, while a six-month-old document gradually reduces its weight to a threshold of $0.6$.
 
 ### 2.3. Adaptive Token Budgeting
-При вызове `search_memory` с параметром `max_token_budget`:
-1. Результаты последовательно суммируют объемы токенов ($\approx \text{chars} / 4$).
-2. На пороговом значении последний фрагмент аккуратно обрезается по границам предложений и слов с добавлением маркера `trimmed_to_budget: true`.
+When calling `search_memory` with the `max_token_budget` parameter:
+1. The results sequentially sum up the token volumes ($\approx \text{chars} / 4$).
+2. Upon reaching the threshold value, the last fragment is neatly trimmed at sentence and word boundaries, adding a `trimmed_to_budget: true` marker.
 
 ---
 
-## 🛠️ 3. Спецификация MCP-инструментов
+## 🛠️ 3. MCP Tools Specification
 
 ### `search_memory`
-- **Параметры**: `query`, `top_k`, `workspace`, `expand_context`, `max_token_budget`, `tier`.
-- **Выход**: `{query, count, results[], degraded, layers, total_estimated_tokens}`.
+- **Parameters**: `query`, `top_k`, `workspace`, `expand_context`, `max_token_budget`, `tier`.
+- **Output**: `{query, count, results[], degraded, layers, total_estimated_tokens}`.
 
 ### `store_memory` (Active Ingestion)
-- **Параметры**: `content`, `title`, `workspace`, `metadata`, `tier`.
-- **Механика**: Прямая загрузка через `/api/v1/document/raw-text` и синхронизация эмбеддингов воркспейса через `/update-embeddings`.
+- **Parameters**: `content`, `title`, `workspace`, `metadata`, `tier`.
+- **Mechanics**: Direct upload via `/api/v1/document/raw-text` and synchronization of workspace embeddings via `/update-embeddings`.
 
 ### `get_document`
-- **Параметры**: `doc_id`, `max_chars`.
-- **Механика**: Извлечение полных raw-данных документа из `docs_fts`.
+- **Parameters**: `doc_id`, `max_chars`.
+- **Mechanics**: Extraction of full raw data of the document from `docs_fts`.
 
 ### `gateway_health`
-- **Механика**: Реальная тестовая вылазка гибридного поиска с отчетом о *degraded mode* при падении векторного слоя.
+- **Mechanics**: A real test probe of the hybrid search, reporting on *degraded mode* in case the vector layer goes down.
 
 ---
 
-## 🧪 4. Тестирование
+## 🧪 4. Testing
 
 ```bash
 python3 -m unittest discover -s tests
 ```
-Все тесты выполняются в изолированной временной директории с генерацией валидного токена доступа.
+All tests are executed in an isolated temporary directory with valid access token generation.

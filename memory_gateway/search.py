@@ -1,8 +1,8 @@
-"""Гибридный retrieval: vector (AnythingLLM) + lexical (FTS5/BM25) + RRF.
+"""Hybrid retrieval: vector (AnythingLLM) + lexical (FTS5/BM25) + RRF.
 
-Контракт: только сырые данные. Никаких /chat, никаких LLM-синтезов.
-Оба слоя выполняются параллельно; результаты объединяются Reciprocal Rank
-Fusion (RRF) с дедупликацией по канонической цели документа.
+Contract: pure raw data only. No /chat, no LLM synthesis.
+Both layers execute in parallel; results are merged via Reciprocal Rank
+Fusion (RRF) with deduplication by canonical document target.
 """
 import concurrent.futures
 import os
@@ -28,35 +28,35 @@ _ALM_LATENCY = []
 _ALM_LAT_LOCK = threading.Lock()
 _ALM_LATENCY_MAX = 64
 
-# Маркеры подсветки FTS5-сниппета (〈b〉…〈/b〉). Убираем при извлечении якоря.
+# FTS5 snippet highlight markers (〈b〉…〈/b〉). Removed when extracting anchor.
 SNIP_OPEN = "\u27e8b\u27e9"
 SNIP_CLOSE = "\u27e8/b\u27e9"
 
-# AnythingLLM (utils/TextSplitter/index.js:145) заворачивает каждый чанк в
-# <document_metadata>...</document_metadata> и добавляет e5-префикс
-# passage:/query: при эмбеддинге. Это серверная обёртка — во входе sync.py
-# её нет, поэтому вырезаем на стороне выдачи шлюза, чтобы агент получал
-# чистый текст без служебного XML-подобного мусора.
+# AnythingLLM (utils/TextSplitter/index.js:145) wraps each chunk in
+# <document_metadata>...</document_metadata> and adds an e5-prefix
+# passage:/query: during embedding. This is a server wrapper — it's not
+# in the sync.py input, so we strip it on the gateway's output side so
+# the agent receives clean text without internal XML-like clutter.
 _DOC_META_RE = re.compile(r"<document_metadata>.*?</document_metadata>", re.DOTALL | re.IGNORECASE)
 _CHUNK_PREFIX_RE = re.compile(r"^\s*(passage|query|search_document|search_query)\s*:\s*", re.IGNORECASE)
 
 
 def _clean_text(text: str) -> str:
-    """Снимает серверные обёртки AnythingLLM: metadata-блок + e5-префикс."""
+    """Strips AnythingLLM server wrappers: metadata block + e5 prefix."""
     if not text:
         return text
     t = _DOC_META_RE.sub("", text)
     t = _CHUNK_PREFIX_RE.sub("", t)
-    t = t.replace("\u2026", " ")  # FTS5 snippet-разделитель
+    t = t.replace("\u2026", " ")  # FTS5 snippet separator
     return re.sub(r"[ \t]+\n", "\n", t).strip()
 
-# ── Секрет: кэшируем токен в памяти, читаем один раз ────────────────────
+# ── Secret: cache token in memory, read once ────────────────────
 _token_cache: Optional[str] = None
 _token_lock = threading.Lock()
 
 
 def load_token() -> str:
-    """Читает Bearer-токен из TOKEN_FILE (600). Кэширует в памяти."""
+    """Reads the Bearer token from TOKEN_FILE (600). Caches in memory."""
     global _token_cache
     with _token_lock:
         if _token_cache:
@@ -71,7 +71,7 @@ def load_token() -> str:
             raise RuntimeError("MG_TOKEN_FILE environment variable is not configured")
         if not os.path.exists(path):
             raise RuntimeError(f"token file not found: {path}")
-        # Мягкая проверка прав: секрет не должен быть мир-читаемым.
+        # Soft permission check: secret should not be world-readable.
         try:
             mode = os.stat(path).st_mode & 0o777
             if mode & 0o077:
@@ -87,10 +87,10 @@ def load_token() -> str:
 
 
 
-# ── Список слагов workspace ─────────────────────────────────────────────
+# ── Workspace slugs list ─────────────────────────────────────────────
 def workspace_slugs() -> List[str]:
-    """Локальный список слагов из MAP_FILE (быстро, без /workspaces).
-    Fallback: официальный GET /workspaces."""
+    """Local list of slugs from MAP_FILE (fast, without /workspaces).
+    Fallback: official GET /workspaces."""
     slugs: List[str] = []
     if os.path.exists(config.MAP_FILE):
         try:
@@ -99,14 +99,14 @@ def workspace_slugs() -> List[str]:
                     line = line.strip()
                     if not line or line.startswith("#"):
                         continue
-                    # формат "src_slug real_slug" — берём РЕАЛЬНЫЙ (2-е поле).
+                    # format "src_slug real_slug" — take the REAL one (2nd field).
                     parts = line.split()
                     slugs.append(parts[1] if len(parts) >= 2 else parts[0])
         except OSError as e:
             log.warning("map read failed: %s", e)
     if slugs:
         return sorted(set(slugs))
-    # fallback: официальный API
+    # fallback: official API
     try:
         tok = load_token()
         r = requests.get(
@@ -180,7 +180,7 @@ def workspace_slugs_for_query(query: str) -> List[str]:
 
 
 
-# ── Vector-слой (AnythingLLM /vector-search) ────────────────────────────
+# ── Vector Layer (AnythingLLM /vector-search) ────────────────────────────
 def _vector_search_one(slug: str, query: str, top_k: int, threshold: float) -> List[Dict[str, Any]]:
     tok = load_token()
     try:
@@ -226,8 +226,8 @@ def _vector_search_one(slug: str, query: str, top_k: int, threshold: float) -> L
 
 
 def _doc_id_from_meta(meta: Dict[str, Any], title: str) -> str:
-    """Каноническая идентификация документа для дедупликации/get_document.
-    Приоритет: relative path (если есть) -> title/basename."""
+    """Canonical document identification for deduplication/get_document.
+    Priority: relative path (if exists) -> title/basename."""
     for k in ("docpath", "path", "url", "chunkSource"):
         v = meta.get(k)
         if v:
@@ -235,28 +235,28 @@ def _doc_id_from_meta(meta: Dict[str, Any], title: str) -> str:
     return title
 
 
-# ── Кэш vector-ответов (снижение нагрузки на ALM, ускорение ответов) ───────
+# ── Vector Responses Cache (reduces ALM load, speeds up responses) ───────
 _VECTOR_CACHE: "Dict[tuple, tuple]" = {}
 _VECTOR_CACHE_LOCK = threading.Lock()
 _VECTOR_CACHE_TTL = float(os.environ.get("MG_VECTOR_CACHE_TTL", "120"))
 _VECTOR_CACHE_MAX = int(os.environ.get("MG_VECTOR_CACHE_MAX", "256"))
 
-# D2: sync-state invalidation — следим за mtime реального файла-продюсера.
-# Файл incremental_report.json перезаписывается каждые 5 мин (alm-sync-incremental.service).
-# При изменении mtime — полный сброс кэша (garbage window ≤ mtime-latency).
+# D2: sync-state invalidation — monitor mtime of the real producer file.
+# incremental_report.json is rewritten every 5 mins (alm-sync-incremental.service).
+# On mtime change — full cache flush (garbage window ≤ mtime-latency).
 _SYNC_STATE_FILE = os.environ.get(
     "MG_SYNC_STATE_FILE",
     os.path.join(config.OPS_DIR, "incremental_report.json"),
 )
 _SYNC_STATE_MTIME: float = 0.0
-_SYNC_STATE_CHECK_INTERVAL = 5.0  # проверяем mtime не чаще раза в 5 сек
+_SYNC_STATE_CHECK_INTERVAL = 5.0  # check mtime at most once every 5 seconds
 _SYNC_STATE_LAST_CHECK: float = 0.0
 
 
 def _check_sync_state() -> None:
-    """D2: сброс кэша при обновлении индекса ALM.
-    Проверяет mtime incremental_report.json (пишется каждые 5 мин инкременталом).
-    Вызывается перед каждым поиском, но не чаще _SYNC_STATE_CHECK_INTERVAL.
+    """D2: cache flush upon ALM index update.
+    Checks mtime of incremental_report.json (written every 5 min by incremental).
+    Called before each search, but no more than _SYNC_STATE_CHECK_INTERVAL.
     """
     global _SYNC_STATE_MTIME, _SYNC_STATE_LAST_CHECK
     now = time.monotonic()
@@ -266,9 +266,9 @@ def _check_sync_state() -> None:
     try:
         mtime = os.path.getmtime(_SYNC_STATE_FILE)
     except OSError:
-        return  # файл не найден — кэш не трогаем
+        return  # file not found — do not touch cache
     if _SYNC_STATE_MTIME == 0.0:
-        # первый вызов — запоминаем mtime без сброса
+        # first call — remember mtime without flushing
         _SYNC_STATE_MTIME = mtime
         return
     if mtime > _SYNC_STATE_MTIME:
@@ -303,8 +303,8 @@ def _vector_cache_put(query: str, top_k: int, threshold: float, workspace, resul
 
 def vector_search(query: str, top_k: int, threshold: float,
                   workspace: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Векторный поиск по одному или всем workspace (параллельно).
-    Результат кэшируется на MG_VECTOR_CACHE_TTL сек (см. _vector_cache_*)."""
+    """Vector search across one or all workspaces (in parallel).
+    Result is cached for MG_VECTOR_CACHE_TTL sec (see _vector_cache_*)."""
     cached = _vector_cache_get(query, top_k, threshold, workspace)
     if cached is not None:
         return cached
@@ -326,15 +326,15 @@ def vector_search(query: str, top_k: int, threshold: float,
     return out
 
 
-# ── Lexical-слой (FTS5 / BM25 по lexical.db, read-only) ──────────────────
+# ── Lexical Layer (FTS5 / BM25 on lexical.db, read-only) ──────────────────
 def _lexical_connect() -> sqlite3.Connection:
-    """Read-only соединение к lexical.db (защита от записи/повреждения)."""
+    """Read-only connection to lexical.db (protection against write/corruption)."""
     uri = f"file:{config.LEXICAL_DB}?mode=ro"
     return sqlite3.connect(uri, uri=True, timeout=config.SEARCH_TIMEOUT)
 
 
 def lexical_search(query: str, top_k: int) -> List[Dict[str, Any]]:
-    """FTS5/BM25 полнотекстовый поиск. OR по токенам (recall), BM25 ранжирует."""
+    """FTS5/BM25 full-text search. OR across tokens (recall), BM25 ranks."""
     if not os.path.exists(config.LEXICAL_DB):
         log.warning("lexical.db missing: %s", config.LEXICAL_DB)
         return []
@@ -373,16 +373,16 @@ def lexical_search(query: str, top_k: int) -> List[Dict[str, Any]]:
     return out
 
 
-# ── Слияние: Reciprocal Rank Fusion + дедуп ─────────────────────────────
+# ── Fusion: Reciprocal Rank Fusion + Deduplication ─────────────────────────────
 def _dedup_key(item: Dict[str, Any]) -> str:
-    """Ключ дедупликации: базовое имя документа, регистронезависимо.
-    Сводит vector(title=CHANGELOG.md) и lexical(path=.../CHANGELOG.md)."""
+    """Deduplication key: base document name, case-insensitive.
+    Merges vector(title=CHANGELOG.md) and lexical(path=.../CHANGELOG.md)."""
     did = item.get("doc_id") or item.get("title") or ""
     return os.path.basename(str(did)).lower()
 
 
 def _minmax(vals: List[float]) -> Dict[float, float]:
-    """Min-max нормализация списка в 0..1."""
+    """Min-max normalization of a list into 0..1 range."""
     if not vals:
         return {}
     lo, hi = min(vals), max(vals)
@@ -433,8 +433,8 @@ def _extract_related_docs(text: str) -> List[str]:
 def _fuse_weighted(vector_hits, lexical_hits, top_k):
     """Score-calibrated fusion (P1) + Temporal Decay Scaling (Issue #8).
 
-    Нормализует vector-cosine и lexical-BM25 в общую 0..1 шкалу,
-    применяет временное затухание (Temporal Decay) для отдачи предпочтения свежим файлам.
+    Normalizes vector-cosine and lexical-BM25 into a common 0..1 scale,
+    applies temporal decay to favor fresh files.
     """
     alpha = config.FUSION_VECTOR_WEIGHT
     v_scores = [float(h.get("vector_score") or 0.0) for h in vector_hits]
@@ -496,9 +496,8 @@ def _fuse_weighted(vector_hits, lexical_hits, top_k):
 def rrf_merge(vector_hits: List[Dict[str, Any]],
               lexical_hits: List[Dict[str, Any]],
               top_k: int) -> List[Dict[str, Any]]:
-    """RRF: score = sum(1/(rank+K)) по спискам. Дедуп по имени документа.
-    При дубле сохраняем самый информативный вариант (с непустым text/workspace)."""
-    k = config.RRF_K
+    """RRF: score = sum(1/(rank+K)) across lists. Deduplication by document name.
+    On duplicate, we keep the most informative variant (non-empty text/workspace)."""
     k = config.RRF_K
     merged: Dict[str, Dict[str, Any]] = {}
     for hits in (vector_hits, lexical_hits):
@@ -527,7 +526,7 @@ def rrf_merge(vector_hits: List[Dict[str, Any]],
                 entry["vector_score"] = item["vector_score"]
             if item.get("lexical_score") is not None:
                 entry["lexical_score"] = item["lexical_score"]
-            # предпочесть более полный контекст и реальный doc_id-путь
+            # prefer more complete context and real doc_id-path
             if len(item.get("text", "")) > len(entry["text"]):
                 entry["text"] = item["text"]
             if item.get("workspace") and not entry["workspace"]:
@@ -540,16 +539,16 @@ def rrf_merge(vector_hits: List[Dict[str, Any]],
     return ordered[:top_k]
 
 
-# ── Публичный гибридный поиск ───────────────────────────────────────────
+# ── Public Hybrid Search ───────────────────────────────────────────
 def hybrid_search(query: str, top_k: int,
                   workspace: Optional[str] = None,
                   expand_context: bool = config.EXPAND_CONTEXT_DEFAULT,
                   fusion: Optional[str] = None,
                   max_token_budget: Optional[int] = None,
                   tier: Optional[str] = None) -> Dict[str, Any]:
-    """Гибрид: vector + lexical ПАРАЛЛЕЛЬНО, слияние. Возвращает чистый JSON.
+    """Hybrid: vector + lexical IN PARALLEL, then fusion. Returns pure JSON.
 
-    degraded=True, если один из слоёв недоступен (второй всё равно вернёт данные).
+    degraded=True if one of the layers is unavailable (the other will still return data).
     fusion: 'weighted' (default, score-calibrated) | 'rrf' (classic).
     """
     query = (query or "").strip()[: config.QUERY_MAX_LEN]
@@ -622,7 +621,7 @@ def hybrid_search(query: str, top_k: int,
 
 def store_memory(content: str, title: Optional[str] = None, workspace: Optional[str] = "dmagybot",
                  metadata: Optional[Dict[str, Any]] = None, tier: Optional[str] = "semantic") -> Dict[str, Any]:
-    """Инструмент активной записи памяти (Issue #7). Загружает сырой текст в AnythingLLM и добавляет эмбеддинги."""
+    """Active memory writing tool (Issue #7). Uploads raw text to AnythingLLM and adds embeddings."""
     if not content or not content.strip():
         return {"success": False, "error": "empty content"}
 
@@ -678,7 +677,7 @@ def store_memory(content: str, title: Optional[str] = None, workspace: Optional[
 
 
 
-# ── get_document: полный сырой текст документа ──────────────────────────
+# ── get_document: full raw document text ──────────────────────────
 def alm_latency_stats() -> Dict[str, Any]:
     """ALM call latency telemetry (P4). Read-only, thread-safe.
     Returns last/p50/p95 in ms and sample count; None if no samples.
@@ -700,17 +699,17 @@ def alm_latency_stats() -> Dict[str, Any]:
             "inflight_limit": max(1, int(config.VECTOR_MAX_INFLIGHT))}
 
 def get_document(doc_id: str, max_chars: int = 20000) -> Dict[str, Any]:
-    """Полный сырой текст документа по doc_id.
+    """Full raw document text by doc_id.
 
-    Стратегия (raw retrieval, без LLM):
-    1) lexical.db (полный content) по точному path, затем по basename;
-    2) fallback — метаданные официального API AnythingLLM (/document/:name).
+    Strategy (raw retrieval, no LLM):
+    1) lexical.db (full content) by exact path, then by basename;
+    2) fallback — metadata from official AnythingLLM API (/document/:name).
     """
     doc_id = (doc_id or "").strip()
     if not doc_id:
         return {"doc_id": doc_id, "found": False, "error": "empty doc_id"}
 
-    # 1) полный текст из lexical.db
+    # 1) full text from lexical.db
     if os.path.exists(config.LEXICAL_DB):
         try:
             conn = _lexical_connect()
@@ -743,7 +742,7 @@ def get_document(doc_id: str, max_chars: int = 20000) -> Dict[str, Any]:
         except sqlite3.Error as e:
             log.error("get_document lexical error: %s", e)
 
-    # 2) fallback: метаданные официального API (без /chat)
+    # 2) fallback: official API metadata (without /chat)
     try:
         tok = load_token()
         r = requests.get(
@@ -762,7 +761,7 @@ def get_document(doc_id: str, max_chars: int = 20000) -> Dict[str, Any]:
                 "truncated": False,
                 "content": "",
                 "metadata": d,
-                "note": "AnythingLLM API returns metadata only; full text не найден в lexical.db",
+                "note": "AnythingLLM API returns metadata only; full text not found in lexical.db",
             }
     except Exception as e:  # noqa: BLE001
         log.warning("get_document api fallback failed: %s", e)
@@ -770,18 +769,18 @@ def get_document(doc_id: str, max_chars: int = 20000) -> Dict[str, Any]:
     return {"doc_id": doc_id, "found": False, "error": "document not found"}
 
 
-# ── Context Assembly: расширение пассажа до связного блока ──────────────
+# ── Context Assembly: expanding a passage into a coherent block ──────────────
 def _strip_anchor(text: str) -> str:
-    """Убирает FTS5-маркеры и схлопывает пробелы для надёжного поиска якоря."""
+    """Removes FTS5 markers and collapses whitespace for reliable anchor search."""
     return re.sub(r"\s+", " ", (text or "").replace(SNIP_OPEN, "").replace(SNIP_CLOSE, "").replace("\u2026", " ")).strip()
 
 
 def _norm_map(text: str) -> tuple:
-    """Нормализует текст (lower + удаление кавычек + схлопывание whitespace в
-    один пробел) для поиска якоря и возвращает (norm_text, offsets), где
-    offsets[i] — позиция i-го символа norm_text в ИСХОДНОМ text. Позволяет
-    искать seed без кавычек/переводов строк, но получить корректную позицию
-    в оригинале для последующего разбиения на абзацы.
+    """Normalizes text (lower + strip quotes + collapse whitespace to
+    a single space) for anchor search and returns (norm_text, offsets), where
+    offsets[i] is the position of the i-th character of norm_text in the ORIGINAL text.
+    Allows searching for the seed without quotes/newlines but getting the correct position
+    in the original for subsequent paragraph splitting.
     """
     norm_chars: List[str] = []
     offsets: List[int] = []
@@ -802,7 +801,7 @@ def _norm_map(text: str) -> tuple:
 
 
 def _lexical_fts_phrase(phrase: str) -> List[tuple]:
-    """[(path, content)] по точной фразе FTS5 — точное попадание в нужный документ."""
+    """[(path, content)] by exact FTS5 phrase — exact hit on the desired document."""
     if not os.path.exists(config.LEXICAL_DB) or len(phrase) < 8:
         return []
     try:
@@ -821,8 +820,8 @@ def _lexical_fts_phrase(phrase: str) -> List[tuple]:
 
 
 def _lexical_fts_tokens(q: str) -> List[tuple]:
-    """[(path, content)] по токенам FTS5 (AND, не обязательно смежные).
-    Не зависит от пути документа — находит нужный док по содержимому.
+    """[(path, content)] by FTS5 tokens (AND, not necessarily adjacent).
+    Independent of document path — finds the right doc by content.
     """
     if not q or not os.path.exists(config.LEXICAL_DB):
         return []
@@ -842,7 +841,7 @@ def _lexical_fts_tokens(q: str) -> List[tuple]:
 
 
 def _lexical_candidates(base: str) -> List[tuple]:
-    """Все документы, чей path оканчивается на /base (неоднозначные имена: SKILL.md)."""
+    """All documents whose path ends with /base (ambiguous names: SKILL.md)."""
     if not base or not os.path.exists(config.LEXICAL_DB):
         return []
     try:
@@ -867,11 +866,11 @@ def _strip_uuid_prefix(base: str) -> str:
 
 
 def _expand_result(result: Dict[str, Any]) -> None:
-    """Мутирует result: расширяет result['text'] соседними абзацами того же
-    документа. Неоднозначность имён (SKILL.md, README.md) снимается через
-    FTS5-фразу якоря — выбирается документ, в котором якорь реально есть.
+    """Mutates result: expands result['text'] with adjacent paragraphs of the
+    same document. Ambiguity of names (SKILL.md, README.md) is resolved via
+    FTS5 anchor phrase — the document where the anchor actually exists is chosen.
 
-    При неудаче оставляет text как есть, context_expanded=False.
+    On failure, leaves text as is, context_expanded=False.
     """
     did = result.get("doc_id")
     original = _clean_text(result.get("text", "") or "")
@@ -882,25 +881,25 @@ def _expand_result(result: Dict[str, Any]) -> None:
     seed = re.sub(r'["“”]', "", anchor[:60]).lower()
     base = _strip_uuid_prefix(os.path.basename(did))
 
-    # 1) точный документ по фразе якоря (FTS5, смежные токены)
+    # 1) exact document by anchor phrase (FTS5, adjacent tokens)
     phrase = " ".join(re.sub(r'["“”]', "", w) for w in anchor.split()[:8])
     candidates = _lexical_fts_phrase(phrase)
-    # 2) фолбэк: FTS5 по ключевым токенам якоря (AND) — не зависит от пути.
-    #    Пунктуацию (в т.ч. ':' которая ломает MATCH как column-filter) режем.
+    # 2) fallback: FTS5 by key anchor tokens (AND) — path-independent.
+    #    We strip punctuation (incl. ':' which breaks MATCH as column-filter).
     if not candidates:
         raw = re.sub(r'["“”]', "", anchor).lower()
         toks = [re.sub(r"[^\w]", "", w) for w in raw.split()]
         toks = [t for t in toks if len(t) > 2][:6]
         if toks:
             candidates = _lexical_fts_tokens(" ".join(toks))
-    # 3) фолбэк: все доки с таким basename
+    # 3) fallback: all docs with such basename
     if not candidates and base:
         candidates = _lexical_candidates(base)
     if not candidates:
         return
-    # выбираем документ, содержащий якорь (снимает неоднозначность).
-    # Сверяем через нормализацию (whitespace + кавычки), чтобы якорь
-    # находился даже при разнице в переводах строк.
+    # choose document containing the anchor (resolves ambiguity).
+    # Check via normalization (whitespace + quotes) so the anchor
+    # is found even if line breaks differ.
     content = None
     for _path, _c in candidates:
         _n, _o = _norm_map(_c)
@@ -908,7 +907,7 @@ def _expand_result(result: Dict[str, Any]) -> None:
             content = _c
             break
     if content is None:
-        content = candidates[0][1]  # фолбэк на первый
+        content = candidates[0][1]  # fallback to first
     if not content:
         return
 
@@ -921,7 +920,7 @@ def _expand_result(result: Dict[str, Any]) -> None:
     if idx < 0:
         return
     idx = offsets[idx]
-    # разбиваем на абзацы и локализуем matched
+    # split into paragraphs and localize matched
     paras = re.split(r"\n\s*\n", content)
     pos = 0
     matched = 0
@@ -929,10 +928,10 @@ def _expand_result(result: Dict[str, Any]) -> None:
         if idx < pos + len(p):
             matched = i
             break
-        pos += len(p) + 2  # съедаем разделитель \n\n
+        pos += len(p) + 2  # consume separator \n\n
     else:
         matched = len(paras) - 1
-    # растим окно симметрично от matched до EXPAND_MAX_CHARS
+    # grow window symmetrically from matched up to EXPAND_MAX_CHARS
     window = [paras[matched]]
     step = 1
     while len("\n\n".join(window)) < config.EXPAND_MAX_CHARS and (
