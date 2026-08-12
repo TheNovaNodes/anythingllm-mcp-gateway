@@ -9,6 +9,8 @@
 
 High-performance **Model Context Protocol (MCP)** server for AnythingLLM semantic memory integration (`TheNovaNodes/anythingllm-mcp-gateway`). Provides AI agents with tools to search, retrieve, and actively store memory facts and documents into AnythingLLM workspaces through a clean, typed MCP API.
 
+It acts as a semantic memory layer in the Antigravity Agent Ecosystem within the DoctorM & Ai / TheNovaNodes Ecosystem.
+
 ## Exposed MCP Tools
 
 | Tool | Description |

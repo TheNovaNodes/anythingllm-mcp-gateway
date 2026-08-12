@@ -1,12 +1,12 @@
-"""MCP-сервер memory-gateway — единое окно к семантической памяти лаборатории.
+"""MCP server memory-gateway - single entry point to semantic memory.
 
-Официальный MCP SDK (FastMCP). Инструменты:
-  - search_memory(query, top_k, workspace): гибридный поиск vector+lexical (RRF).
-  - get_document(doc_id, max_chars): полный сырой текст документа.
-  - gateway_health(): состояние слоёв (диагностика).
+Official MCP SDK (FastMCP). Tools:
+  - search_memory(query, top_k, workspace): hybrid search vector+lexical (RRF).
+  - get_document(doc_id, max_chars): full raw text of the document.
+  - gateway_health(): layer status (diagnostics).
 
-Только сырые данные. Никаких /chat и LLM-прослоек.
-Транспорт: MG_TRANSPORT=stdio (по умолчанию) | streamable-http (сетевой деплой).
+Raw data only. No /chat or LLM middle layers.
+Transport: MG_TRANSPORT=stdio (default) | streamable-http (network deploy).
 """
 __version__ = "0.2.0"
 import os
@@ -39,20 +39,20 @@ def search_memory(query: str, top_k: int = config.DEFAULT_TOP_K,
                   expand_context: bool = config.EXPAND_CONTEXT_DEFAULT,
                   max_token_budget: Optional[int] = None,
                   tier: Optional[str] = None) -> Dict[str, Any]:
-    """Гибридный семантический поиск по памяти лаборатории (vector + lexical, RRF).
+    """Hybrid semantic search (vector + lexical, RRF).
 
     Args:
-        query: поисковый запрос на естественном языке или по ключевым словам.
-        top_k: число результатов (1..MAX_TOP_K).
-        workspace: опционально — ограничить векторный слой одним слагом workspace.
-        expand_context: если True (по умолчанию), каждый найденный пассаж
-            расширяется до связного блока — подтягиваются соседние абзацы того
-            же документа (Context Assembly).
-        max_token_budget: опционально — максимальный бюджет токенов вывода (Adaptive Token Budgeting).
-        tier: опционально — иерархический уровень памяти ('episodic', 'semantic', 'procedural').
+        query: natural language search query or keywords.
+        top_k: number of results (1..MAX_TOP_K).
+        workspace: optional - limit the vector layer to a single workspace slug.
+        expand_context: if True (default), each found passage
+            is expanded to a cohesive block by fetching neighboring paragraphs
+            from the same document (Context Assembly).
+        max_token_budget: optional - max token budget for output (Adaptive Token Budgeting).
+        tier: optional - hierarchical memory tier ('episodic', 'semantic', 'procedural').
 
     Returns:
-        Чистый JSON: {query, count, results[], degraded, layers, total_estimated_tokens}.
+        Clean JSON: {query, count, results[], degraded, layers, total_estimated_tokens}.
     """
     t0 = time.time()
     try:
@@ -64,7 +64,7 @@ def search_memory(query: str, top_k: int = config.DEFAULT_TOP_K,
             max_token_budget=max_token_budget,
             tier=tier
         )
-    except Exception as e:  # noqa: BLE001 — инструмент не должен ронять сервер
+    except Exception as e:  # noqa: BLE001 - tool should not crash the server
         log.exception("search_memory failed")
         return {"query": query, "count": 0, "results": [], "degraded": True,
                 "error": f"{type(e).__name__}: {e}"}
@@ -80,17 +80,17 @@ def store_memory(content: str, title: Optional[str] = None,
                  workspace: Optional[str] = "dmagybot",
                  metadata: Optional[Dict[str, Any]] = None,
                  tier: Optional[str] = "semantic") -> Dict[str, Any]:
-    """Сохранение новых фактов, диалогов и знаний в семантическую память (Issue #7).
+    """Store new facts, dialogs, and knowledge into semantic memory (Issue #7).
 
     Args:
-        content: текст знания, факта или заметки для сохранения.
-        title: заголовок/имя файла знания (например, 'user_preferences.txt').
-        workspace: целевой воркспейс в AnythingLLM (по умолчанию 'dmagybot').
-        metadata: дополнительные метаданные в формате словаря.
-        tier: иерархический уровень памяти ('episodic', 'semantic', 'procedural').
+        content: text of the knowledge, fact, or note to save.
+        title: title/filename of the knowledge (e.g., 'user_preferences.txt').
+        workspace: target workspace in AnythingLLM (defaults to 'dmagybot').
+        metadata: additional metadata in dictionary format.
+        tier: hierarchical memory tier ('episodic', 'semantic', 'procedural').
 
     Returns:
-        Чистый JSON: {success, doc_id, title, location, workspace, tier}.
+        Clean JSON: {success, doc_id, title, location, workspace, tier}.
     """
     t0 = time.time()
     try:
@@ -111,14 +111,14 @@ def store_memory(content: str, title: Optional[str] = None,
 
 @mcp.tool(name="get_document")
 def get_document(doc_id: str, max_chars: int = 20000) -> Dict[str, Any]:
-    """Полный сырой текст документа по doc_id (из search_memory results[].doc_id).
+    """Full raw text of a document by doc_id (from search_memory results[].doc_id).
 
     Args:
-        doc_id: путь/идентификатор документа (напр. projects/lab-memory/CHANGELOG.md).
-        max_chars: максимум символов текста (защита от переполнения контекста).
+        doc_id: document path/ID (e.g. projects/lab-memory/CHANGELOG.md).
+        max_chars: max text characters (protects against context overflow).
 
     Returns:
-        Чистый JSON: {doc_id, found, source, title, chars, truncated, content}.
+        Clean JSON: {doc_id, found, source, title, chars, truncated, content}.
     """
     try:
         return search.get_document(doc_id, max_chars)
@@ -129,28 +129,28 @@ def get_document(doc_id: str, max_chars: int = 20000) -> Dict[str, Any]:
 
 @mcp.tool(name="gateway_health")
 def gateway_health() -> Dict[str, Any]:
-    """Диагностика шлюза: доступность токена, lexical.db, число workspace."""
+    """Gateway diagnostics: token presence, lexical.db, workspace count."""
     health: Dict[str, Any] = {"ok": True}
-    # токен
+    # token
     try:
         tok = search.load_token()
         health["token"] = {"present": bool(tok), "len": len(tok)}
     except Exception as e:  # noqa: BLE001
         health["ok"] = False
         health["token"] = {"present": False, "error": str(e)}
-    # lexical.db
+    # lexical.db check
     health["lexical_db"] = {
         "path": config.LEXICAL_DB,
         "exists": os.path.exists(config.LEXICAL_DB),
     }
-    # workspaces
+    # workspaces check
     try:
         slugs = search.workspace_slugs()
         health["workspaces"] = {"count": len(slugs)}
     except Exception as e:  # noqa: BLE001
         health["ok"] = False
         health["workspaces"] = {"count": 0, "error": str(e)}
-    # vector layer — live probe (AnythingLLM /api/v1/system/vector-count)
+    # vector layer - live probe (AnythingLLM /api/v1/system/vector-count)
     try:
         import requests as _requests
         tok = search.load_token()
@@ -170,10 +170,10 @@ def gateway_health() -> Dict[str, Any]:
     except Exception as e:  # noqa: BLE001
         health["ok"] = False
         health["vector_layer"] = {"reachable": False, "error": str(e)}
-    # HONEST probe: reachable+vector_count врут, если поисковый путь падает.
-    # Дёргаем реальный гибридный поиск и смотрим, вернул ли векторный слой хиты.
+    # HONEST probe: reachable+vector_count lie if search path fails.
+    # Run a real hybrid search and check if vector layer returns hits.
     try:
-        probe = search.hybrid_search("тест семантической памяти", top_k=3,
+        probe = search.hybrid_search("semantic memory test", top_k=3,
                                      expand_context=False)
         vec_hits = int(probe.get("layers", {}).get("vector", 0))
         vl_ok = health.get("vector_layer", {}).get("reachable", False)
@@ -196,34 +196,34 @@ def gateway_health() -> Dict[str, Any]:
     health["alm_base"] = config.ALM_BASE
     health["version"] = __import__("memory_gateway").__version__
 
-    # ── человекочитаемый итог (для алертов/крона) ───────────────────────
+    # ── human readable summary (for alerts/cron) ────────────────────────
     problems: list[str] = []
     if not health.get("token", {}).get("present"):
-        problems.append("нет Bearer-токена AnythingLLM")
+        problems.append("no AnythingLLM Bearer token")
     if not health.get("lexical_db", {}).get("exists"):
-        problems.append("лексический индекс (lexical.db) отсутствует")
+        problems.append("lexical index (lexical.db) is missing")
     vl = health.get("vector_layer", {})
     if not vl.get("reachable"):
-        problems.append("векторный слой недоступен")
+        problems.append("vector layer unreachable")
     vs = health.get("vector_search", {})
     if vl.get("reachable") and not vs.get("functional", True):
         problems.append(
-            "векторный поиск не работает (индекс есть, но поиск отдаёт 0 хитов) "
-            "— семантическая память деградировала до лексической"
+            "vector search is broken (index exists but search yields 0 hits) "
+            "- semantic memory degraded to lexical"
         )
     ws = health.get("workspaces", {})
     if "error" in ws:
-        problems.append("ошибка перечисления workspace")
+        problems.append("failed to list workspaces")
     if problems:
         health["message"] = (
-            "⚠️ Деградация семантической памяти: " + ", ".join(problems) + "."
+            "⚠️ Semantic memory degradation: " + ", ".join(problems) + "."
         )
     else:
         health["message"] = (
-            f"✅ Семантическая память работает штатно: "
-            f"{ws.get('count')} пространств знаний, "
-            f"{vl.get('vector_count')} векторов в индексе, "
-            f"лексический слой подключён. Шлюз v{health['version']}."
+            f"✅ Semantic memory operational: "
+            f"{ws.get('count')} workspaces, "
+            f"{vl.get('vector_count')} vectors in index, "
+            f"lexical layer connected. Gateway v{health['version']}."
         )
     return health
 

@@ -1,75 +1,75 @@
-"""Централизованная конфигурация memory-gateway.
+"""Centralized configuration for memory-gateway.
 
-Все пути и таймауты — здесь. Значения можно переопределить через env
-(префикс MG_) для деплоя, не трогая код.
+All paths and timeouts are here. Values can be overridden via env vars
+(prefix MG_) for deployment, without touching the code.
 """
 import os
 
-# ── AnythingLLM REST API (только официальный API, Bearer) ──────────────
+# ── AnythingLLM REST API (official API only, Bearer) ───────────────────
 ALM_BASE = os.environ.get("MG_ALM_BASE", "http://127.0.0.1:3001/api/v1")
 
-# ── Секреты (600) ──────────────────────────────────────────────────────
-# Системный Bearer-токен AnythingLLM для vector-search.
+# ── Secrets (600) ──────────────────────────────────────────────────────
+# System Bearer token for AnythingLLM vector-search.
 TOKEN_FILE = os.environ.get("MG_TOKEN_FILE")
 if not TOKEN_FILE and "MG_AUTH_TOKEN" in os.environ:
-    # Legacy alias — убрать в следующем мажорном релизе
+    # Legacy alias - to be removed in the next major release
     TOKEN_FILE = os.environ.get("MG_AUTH_TOKEN")
 
-# ── Операционная директория (лексический слой) ─────────────────────────
+# ── Operational Directory (lexical layer) ──────────────────────────────
 _repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 OPS_DIR = os.environ.get("MG_OPS_DIR", os.path.join(_repo_root, "ops", "shared", "anythingllm-sync"))
-# FTS5/BM25 индекс по .md-корпусу лаборатории (read-only доступ).
+# FTS5/BM25 index for the lab's .md corpus (read-only access).
 LEXICAL_DB = os.environ.get("MG_LEXICAL_DB", os.path.join(OPS_DIR, "lexical.db"))
-# Локальный список слагов workspace (быстрее и без прав на /workspaces).
+# Local workspace slug mappings list (faster and does not require /workspaces perms).
 MAP_FILE = os.environ.get("MG_MAP_FILE")
 if not MAP_FILE:
     MAP_FILE = os.path.join(OPS_DIR, "workspace_map.json")
 
-# ── Таймауты (сек) ─────────────────────────────────────────────────────
+# ── Timeouts (sec) ─────────────────────────────────────────────────────
 LIST_TIMEOUT = float(os.environ.get("MG_LIST_TIMEOUT", "15"))
 SEARCH_TIMEOUT = float(os.environ.get("MG_SEARCH_TIMEOUT", "30"))
 
-# ── Поиск ──────────────────────────────────────────────────────────────
+# ── Search ─────────────────────────────────────────────────────────────
 DEFAULT_TOP_K = int(os.environ.get("MG_DEFAULT_TOP_K", "5"))
 MAX_TOP_K = int(os.environ.get("MG_MAX_TOP_K", "25"))
-# Порог отсечения векторного слоя. Распределение реальных скоров бимодально:
-# ~1.0 (точное совпадение) либо кластер ~0.15 (слабый, но релевантный хвост).
-# 0.13 — чуть ниже хвоста, чтобы не срезать легитимные 0.15, но отсекать мусор.
+# Vector layer cutoff threshold. Real score distribution is bimodal:
+# ~1.0 (exact match) or cluster ~0.15 (weak, but relevant tail).
+# 0.13 is just below the tail, so we don't cut off legitimate 0.15, but filter noise.
 VECTOR_SCORE_THRESHOLD = float(os.environ.get("MG_VECTOR_SCORE_THRESHOLD", "0.13"))
-# Лёгкий пол для лексического слоя (BM25, выше = лучше). Отсекает шум < 1.0.
+# Soft floor for lexical layer (BM25, higher = better). Cuts off noise < 1.0.
 LEXICAL_MIN_SCORE = float(os.environ.get("MG_LEXICAL_MIN_SCORE", "1.0"))
 RRF_K = int(os.environ.get("MG_RRF_K", "60"))
 QUERY_MAX_LEN = int(os.environ.get("MG_QUERY_MAX_LEN", "1000"))
-# Сколько кандидатов тянуть из каждого слоя перед слиянием (recall > precision).
+# How many candidates to fetch from each layer before fusion (recall > precision).
 CANDIDATE_MULT = int(os.environ.get("MG_CANDIDATE_MULT", "3"))
-# Ограничение параллельных vector-запросов по workspace.
+# Limit of concurrent vector requests per workspace.
 VECTOR_MAX_WORKERS = int(os.environ.get("MG_VECTOR_MAX_WORKERS", "6"))
-# Ограничение конкурентных вызовов ALM на процесс (fan-out throttle, P4).
+# Limit of concurrent ALM calls per process (fan-out throttle, P4).
 VECTOR_MAX_INFLIGHT = int(os.environ.get("MG_VECTOR_MAX_INFLIGHT", "4"))
 
-# ── Fusion-стратегия (P1: score-calibrated вместо чистого RRF) ──────
-# 'rrf'     — классический Reciprocal Rank Fusion (k=60), игнорирует абс. скоры.
-# 'weighted' — нормализация vector-cosine(0..1) и lexical-BM25(->0..1) в
-#              общую шкалу + взвешенная сумма α·vec+(1-α)·lex + совокупный порог.
-#              Убирает шум, когда слои расходятся (подтверждено eval NDCG@5 0.328->).
+# ── Fusion Strategy (P1: score-calibrated instead of pure RRF) ───────
+# 'rrf'     - classic Reciprocal Rank Fusion (k=60), ignores absolute scores.
+# 'weighted' - normalizes vector-cosine(0..1) and lexical-BM25(->0..1) into
+#              a common scale + weighted sum α·vec+(1-α)·lex + combined threshold.
+#              Removes noise when layers diverge (confirmed by eval NDCG@5 0.328->).
 FUSION_MODE = os.environ.get("MG_FUSION_MODE", "weighted").lower()
-# Вес векторного слоя в weighted-fusion (1-α — вес lexical).
+# Weight of the vector layer in weighted-fusion (1-α is the lexical weight).
 FUSION_VECTOR_WEIGHT = float(os.environ.get("MG_FUSION_VECTOR_WEIGHT", "0.6"))
-# Совокупный порог: результат отбрасывается, если ОБА слоя слабы
-# (lexical-only шум с высоким BM25 по коротким токенам).
+# Combined threshold: result is dropped if BOTH layers are weak
+# (lexical-only noise with high BM25 on short tokens).
 FUSION_MIN_COMBINED = float(os.environ.get("MG_FUSION_MIN_COMBINED", "0.05"))
 
-# ── Context Assembly (умная склейка контекста) ────────────────────────
-# Если найден релевантный пассаж, шлюз расширяет его до связного блока:
-# подтягивает соседние абзацы того же документа (через полный content из
-# lexical.db / get_document), чтобы агент получал логически завершённый
-# текст, а не изолированный чанк, оборванный на полуслове.
+# ── Context Assembly (smart context stitching) ─────────────────────────
+# If a relevant passage is found, the gateway expands it to a cohesive block:
+# fetches neighboring paragraphs of the same document (via full content from
+# lexical.db / get_document), so the agent gets logically complete
+# text, rather than an isolated chunk cut off mid-sentence.
 EXPAND_CONTEXT_DEFAULT = bool(int(os.environ.get("MG_EXPAND_CONTEXT_DEFAULT", "1")))
-EXPAND_PARAGRAPHS = int(os.environ.get("MG_EXPAND_PARAGRAPHS", "1"))  # соседей до/после
-EXPAND_MAX_CHARS = int(os.environ.get("MG_EXPAND_MAX_CHARS", "4000"))  # жёсткий потолок
-CONTEXT_ANCHOR_MIN = int(os.environ.get("MG_CONTEXT_ANCHOR_MIN", "30"))  # мин. длина якоря
+EXPAND_PARAGRAPHS = int(os.environ.get("MG_EXPAND_PARAGRAPHS", "1"))  # neighbors before/after
+EXPAND_MAX_CHARS = int(os.environ.get("MG_EXPAND_MAX_CHARS", "4000"))  # hard ceiling
+CONTEXT_ANCHOR_MIN = int(os.environ.get("MG_CONTEXT_ANCHOR_MIN", "30"))  # min anchor length
 
-# ── Логи ───────────────────────────────────────────────────────────────
+# ── Logs ───────────────────────────────────────────────────────────────
 LOG_DIR = os.environ.get(
     "MG_LOG_DIR",
     os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs"),
@@ -77,9 +77,9 @@ LOG_DIR = os.environ.get(
 LOG_FILE = os.environ.get("MG_LOG_FILE", os.path.join(LOG_DIR, "memory-gateway.log"))
 LOG_LEVEL = os.environ.get("MG_LOG_LEVEL", "INFO")
 
-# ── MCP-транспорт ──────────────────────────────────────────────────────
-# stdio — для запуска как subprocess из конфига агента (рекомендуется);
-# streamable-http — для сетевого деплоя (systemd), порт MG_PORT.
+# ── MCP Transport ──────────────────────────────────────────────────────
+# stdio - to run as a subprocess from the agent's config (recommended);
+# streamable-http - for network deploy (systemd), port MG_PORT.
 TRANSPORT = os.environ.get("MG_TRANSPORT", "stdio")
 HOST = os.environ.get("MG_HOST", "127.0.0.1")
 PORT = int(os.environ.get("MG_PORT", "8091"))

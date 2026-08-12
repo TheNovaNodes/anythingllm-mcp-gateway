@@ -1,8 +1,8 @@
-"""memory-gateway — MCP Semantic Memory Gateway for LabDoctorM.
+"""memory-gateway - MCP Semantic Memory Gateway for LabDoctorM.
 
-Единое окно доступа агентов OpenClaw к семантической памяти лаборатории.
-Гибридный retrieval: vector (AnythingLLM /vector-search) + lexical (FTS5/BM25).
-Только сырые данные (raw retrieval). Никаких /chat и LLM-прослоек.
+Single access point for agents to the lab's semantic memory.
+Hybrid retrieval: vector (AnythingLLM /vector-search) + lexical (FTS5/BM25).
+Raw data only (raw retrieval). No /chat or LLM middleware.
 """
 
 __version__ = "0.1.0"

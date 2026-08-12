@@ -1,7 +1,7 @@
-"""Простое надёжное логирование ошибок memory-gateway.
+"""Simple and reliable error logging for memory-gateway.
 
-Пишет в файл (config.LOG_FILE) с ротацией по размеру + дублирует WARNING+
-в stderr. Никогда не роняет процесс из-за проблем логирования.
+Writes to a file (config.LOG_FILE) with size rotation and duplicates WARNING+
+to stderr. Never crashes the process due to logging issues.
 """
 import logging
 import os
@@ -27,7 +27,7 @@ def get_logger():
         datefmt="%Y-%m-%dT%H:%M:%S",
     )
 
-    # Файловый handler (best-effort: если каталог недоступен — только stderr).
+    # File handler (best-effort: if directory is inaccessible, only stderr is used).
     try:
         os.makedirs(config.LOG_DIR, exist_ok=True)
         fh = RotatingFileHandler(
@@ -35,10 +35,10 @@ def get_logger():
         )
         fh.setFormatter(fmt)
         log.addHandler(fh)
-    except Exception as e:  # noqa: BLE001 — логирование не должно падать
+    except Exception as e:  # noqa: BLE001 - logging should not crash
         sys.stderr.write(f"[memory-gateway] file log disabled: {e}\n")
 
-    # stderr для WARNING+ (stdout занят stdio-транспортом MCP — туда нельзя!).
+    # stderr for WARNING+ (stdout is occupied by MCP stdio transport - cannot use it!).
     sh = logging.StreamHandler(sys.stderr)
     sh.setLevel(logging.WARNING)
     sh.setFormatter(fmt)

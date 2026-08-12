@@ -25,6 +25,18 @@ class TestMemoryGateway(unittest.TestCase):
         tok = search.load_token()
         self.assertEqual(tok, "0RYFPN9-S6648E5-QX9SG9F-0C8DXPD")
 
+    @patch.dict(os.environ, {"ANYTHINGLLM_API_KEY": "ENV-FALLBACK-TOKEN"})
+    def test_load_token_empty_file_fallback(self):
+        # Empty the token file
+        with open(self.token_file, "w", encoding="utf-8") as f:
+            f.write("")
+
+        search._token_cache = None
+        # Test fallback
+        tok = search.load_token()
+        self.assertEqual(tok, "ENV-FALLBACK-TOKEN")
+        search._token_cache = None
+
     @patch("memory_gateway.search.requests.post")
     def test_store_memory_success(self, mock_post):
         # Mock document upload
