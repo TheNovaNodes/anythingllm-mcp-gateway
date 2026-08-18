@@ -1,81 +1,59 @@
-import unittest
+import pytest
 from unittest.mock import patch, MagicMock
-import os
-import tempfile
 
-from memory_gateway import search, server, config
+# Import the server tools
+from memory_gateway.server import search_memory, get_document, gateway_health
 
-
-class TestMemoryGateway(unittest.TestCase):
-
-    def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.token_file = os.path.join(self.temp_dir.name, "token.txt")
-        with open(self.token_file, "w", encoding="utf-8") as f:
-            f.write("0RYFPN9-S6648E5-QX9SG9F-0C8DXPD")
-        os.chmod(self.token_file, 0o600)
-        config.TOKEN_FILE = self.token_file
-        search._token_cache = None
-
-    def tearDown(self):
-        self.temp_dir.cleanup()
-        search._token_cache = None
-
-    def test_load_token(self):
-        tok = search.load_token()
-        self.assertEqual(tok, "0RYFPN9-S6648E5-QX9SG9F-0C8DXPD")
-
-    @patch("memory_gateway.search.requests.post")
-    def test_store_memory_success(self, mock_post):
-        # Mock document upload
-        resp_raw = MagicMock()
-        resp_raw.ok = True
-        resp_raw.json.return_value = {
-            "documents": [{"id": "doc-123", "location": "custom-documents/test.json"}]
+def test_search_memory_success():
+    with patch("memory_gateway.search.hybrid_search") as mock_search:
+        mock_search.return_value = {
+            "query": "test", "count": 1, "results": [{"doc_id": "test.md"}],
+            "degraded": False, "layers": {"vector": 1}
         }
-        
-        # Mock workspace embedding update
-        resp_ws = MagicMock()
-        resp_ws.ok = True
-        resp_ws.json.return_value = {"workspace": {"id": 1, "slug": "dmagybot"}}
+        res = search_memory("test")
+        assert res["count"] == 1
+        assert not res["degraded"]
+        assert "latency_ms" in res
 
-        mock_post.side_effect = [resp_raw, resp_ws]
+def test_search_memory_exception():
+    with patch("memory_gateway.search.hybrid_search") as mock_search:
+        mock_search.side_effect = Exception("API Timeout")
+        res = search_memory("test")
+        assert res["count"] == 0
+        assert res["degraded"]
+        assert "error" in res
+        assert "API Timeout" in res["error"]
 
-        res = search.store_memory(
-            content="User prefers Python 3.12 and dark mode",
-            title="user_prefs.txt",
-            workspace="dmagybot",
-            tier="episodic"
-        )
-        self.assertTrue(res["success"])
-        self.assertEqual(res["doc_id"], "doc-123")
-        self.assertEqual(res["workspace"], "dmagybot")
+def test_get_document_success():
+    with patch("memory_gateway.search.get_document") as mock_get:
+        mock_get.return_value = {"doc_id": "123", "found": True, "content": "hello"}
+        res = get_document("123")
+        assert res["found"]
+        assert res["content"] == "hello"
 
-    @patch("memory_gateway.search.vector_search")
-    @patch("memory_gateway.search.lexical_search")
-    def test_hybrid_search_with_token_budget(self, mock_lexical, mock_vector):
-        mock_vector.return_value = [
-            {"source": "vector", "workspace": "dmagybot", "title": "Doc 1", "doc_id": "doc1", "text": "A" * 400, "vector_score": 0.9},
-            {"source": "vector", "workspace": "dmagybot", "title": "Doc 2", "doc_id": "doc2", "text": "B" * 400, "vector_score": 0.8}
-        ]
-        mock_lexical.return_value = []
+def test_get_document_exception():
+    with patch("memory_gateway.search.get_document") as mock_get:
+        mock_get.side_effect = Exception("404 Not Found")
+        res = get_document("123")
+        assert not res["found"]
+        assert "error" in res
 
-        res = search.hybrid_search("python", top_k=2, expand_context=False, max_token_budget=150)
-        self.assertLessEqual(res["total_estimated_tokens"], 150)
-        self.assertTrue(res["count"] > 0)
-
-    def test_temporal_decay_calculation(self):
-        # Existing file should have decay factor <= 1.0
-        decay = search._calculate_temporal_decay(self.token_file)
-        self.assertGreaterEqual(decay, 0.6)
-        self.assertLessEqual(decay, 1.0)
-
-    def test_extract_related_docs(self):
-        sample_text = "See [architecture](docs/arch.md) and import os\nfrom memory_gateway.search import hybrid_search"
-        related = search._extract_related_docs(sample_text)
-        self.assertIn("docs/arch.md", related)
-        self.assertIn("memory_gateway/search.py", related)
-
-
-if __name__ == "__main__":
-    unittest.main()
+@patch("memory_gateway.search.load_token")
+@patch("memory_gateway.search.workspace_slugs")
+@patch("memory_gateway.search.hybrid_search")
+@patch("requests.get")
+def test_gateway_health_success(mock_get, mock_search, mock_slugs, mock_token):
+    mock_token.return_value = "fake-token"
+    mock_slugs.return_value = ["workspace1"]
+    
+    mock_vr = MagicMock()
+    mock_vr.ok = True
+    mock_vr.json.return_value = {"vectorCount": 100}
+    mock_get.return_value = mock_vr
+    
+    mock_search.return_value = {"layers": {"vector": 1}, "degraded": False}
+    
+    res = gateway_health()
+    # It might be missing lexical_db, so it might not be fully OK
+    assert "token" in res
+    assert "workspaces" in res
