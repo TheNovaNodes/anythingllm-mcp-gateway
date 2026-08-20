@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 
 import json
 import requests
+import urllib.parse
 
 from . import config
 from .logger import get_logger
@@ -187,7 +188,7 @@ def _vector_search_one(slug: str, query: str, top_k: int, threshold: float) -> L
         t0 = time.monotonic()
         with _ALM_SEM:
             r = requests.post(
-                f"{config.ALM_BASE}/workspace/{slug}/vector-search",
+                f"{config.ALM_BASE}/workspace/{urllib.parse.quote(slug, safe='')}/vector-search",
                 headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json"},
                 json={"query": query, "topN": top_k, "scoreThreshold": threshold},
                 timeout=config.SEARCH_TIMEOUT,
@@ -399,7 +400,7 @@ def _calculate_temporal_decay(doc_id: str) -> float:
     Calculates recency factor exp(-0.005 * delta_days) based on doc mtime.
     Returns float multiplier in range 0.6..1.0.
     """
-    if not doc_id:
+    if not doc_id or ".." in doc_id or doc_id.startswith("/"):
         return 1.0
     try:
         if os.path.exists(doc_id):
@@ -655,7 +656,7 @@ def store_memory(content: str, title: Optional[str] = None, workspace: Optional[
 
         target_ws = workspace or "dmagybot"
         ws_r = requests.post(
-            f"{config.ALM_BASE}/workspace/{target_ws}/update-embeddings",
+            f"{config.ALM_BASE}/workspace/{urllib.parse.quote(target_ws, safe='')}/update-embeddings",
             headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json"},
             json={"adds": [location]},
             timeout=config.SEARCH_TIMEOUT
@@ -747,7 +748,7 @@ def get_document(doc_id: str, max_chars: int = 20000) -> Dict[str, Any]:
     try:
         tok = load_token()
         r = requests.get(
-            f"{config.ALM_BASE}/document/{doc_id}",
+            f"{config.ALM_BASE}/document/{urllib.parse.quote(doc_id, safe='')}",
             headers={"Authorization": f"Bearer {tok}"},
             timeout=config.LIST_TIMEOUT,
         )
