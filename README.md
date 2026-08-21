@@ -1,3 +1,12 @@
+---
+module_type: gateway
+status: active
+protocol: mcp
+primary_capability: semantic_memory
+requires: anythingllm
+works_with: ai_agents
+last_verified: 2026-08-21
+---
 # anythingllm-mcp-gateway 🧠
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
