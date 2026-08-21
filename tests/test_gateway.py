@@ -76,6 +76,28 @@ class TestMemoryGateway(unittest.TestCase):
         self.assertIn("docs/arch.md", related)
         self.assertIn("memory_gateway/search.py", related)
 
+    @patch("memory_gateway.search.requests.get")
+    def test_get_document_api_fallback(self, mock_get):
+        # Test fallback to AnythingLLM API when lexical DB is missing or doesn't have the doc
+        config.LEXICAL_DB = "/non_existent_path.db"
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "document": {"title": "fallback_doc.md"}
+        }
+        mock_get.return_value = mock_resp
+
+        res = search.get_document("fallback_doc.md", max_chars=100)
+        self.assertTrue(res["found"])
+        self.assertEqual(res["source"], "anythingllm-metadata")
+        self.assertEqual(res["title"], "fallback_doc.md")
+
+    def test_get_document_empty_id(self):
+        res = search.get_document("")
+        self.assertFalse(res["found"])
+        self.assertEqual(res["error"], "empty doc_id")
+
 
 if __name__ == "__main__":
     unittest.main()
