@@ -57,3 +57,48 @@ def test_gateway_health_success(mock_get, mock_search, mock_slugs, mock_token):
     # It might be missing lexical_db, so it might not be fully OK
     assert "token" in res
     assert "workspaces" in res
+
+
+def test_token_invalidation_and_reload(tmp_path, monkeypatch):
+    from memory_gateway import search, config
+    
+    token_file = tmp_path / "test_token.txt"
+    token_file.write_text("token-v1")
+    
+    monkeypatch.setattr(config, "TOKEN_FILE", str(token_file))
+    monkeypatch.setattr(config, "TOKEN_RAW", None)
+    monkeypatch.delenv("ANYTHINGLLM_API_KEY", raising=False)
+    monkeypatch.delenv("MG_API_KEY", raising=False)
+    monkeypatch.delenv("MG_AUTH_TOKEN", raising=False)
+    
+    search.invalidate_token_cache()
+    tok1 = search.load_token()
+    assert tok1 == "token-v1"
+    
+    # Invalidate cache and update file
+    token_file.write_text("token-v2")
+    search.invalidate_token_cache()
+    tok2 = search.load_token()
+    assert tok2 == "token-v2"
+
+
+def test_vector_search_one_401_retry():
+    from memory_gateway import search
+    
+    resp_401 = MagicMock()
+    resp_401.status_code = 401
+    
+    resp_200 = MagicMock()
+    resp_200.status_code = 200
+    resp_200.json.return_value = {
+        "results": [{"title": "Doc1", "text": "Content", "score": 0.9, "metadata": {"title": "Doc1"}}]
+    }
+    
+    with patch("requests.post", side_effect=[resp_401, resp_200]) as mock_post, \
+         patch("memory_gateway.search.load_token", return_value="token123"):
+        
+        res = search._vector_search_one("default", "query", 5, 0.1)
+        assert len(res) == 1
+        assert res[0]["title"] == "Doc1"
+        assert mock_post.call_count == 2
+
