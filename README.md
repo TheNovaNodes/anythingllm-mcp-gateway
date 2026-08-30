@@ -52,7 +52,8 @@ git clone https://github.com/TheNovaNodes/anythingllm-mcp-gateway.git
 cd anythingllm-mcp-gateway
 python3 -m venv venv
 source venv/bin/activate
-pip install -e .
+pip install -e ".[dev]"
+pytest tests/
 ```
 
 ## Configuration
@@ -66,7 +67,8 @@ cp .env.example .env
 | Variable | Description | Default / Example |
 |----------|-------------|-------------------|
 | `MG_ALM_BASE` | AnythingLLM REST API endpoint (Local: `http://127.0.0.1:3001/api/v1`, Prod: `https://alm.shtab-ai.ru/api/v1`) | `http://127.0.0.1:3001/api/v1` |
-| `MG_TOKEN_FILE` | Path to AnythingLLM Bearer token file | **Required** (or `ANYTHINGLLM_API_KEY`) |
+| `ANYTHINGLLM_API_KEY` | AnythingLLM Bearer API token string directly | `your_api_key_here` |
+| `MG_TOKEN_FILE` | Path to AnythingLLM Bearer token file | **Required** (or `ANYTHINGLLM_API_KEY` / `MG_API_KEY`) |
 | `MG_OPS_DIR` | Operational directory for lexical index | `./ops` |
 | `MG_LEXICAL_DB` | FTS5/BM25 lexical database path | `{MG_OPS_DIR}/lexical.db` |
 | `MG_MAP_FILE` | Workspace slug mappings file | `{MG_OPS_DIR}/workspace_map.json` |
