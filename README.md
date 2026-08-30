@@ -106,7 +106,8 @@ Add to your MCP client config (e.g. `claude_desktop_config.json`):
 ## Running Tests
 
 ```bash
-python3 -m unittest discover -s tests
+pytest tests/
+# or: python3 -m unittest discover -s tests
 ```
 
 ## License
