@@ -53,29 +53,49 @@ def _clean_text(text: str) -> str:
 
 # ── Секрет: кэшируем токен в памяти, читаем один раз ────────────────────
 _token_cache: Optional[str] = None
+_token_file_mtime: float = 0.0
 _token_lock = threading.Lock()
 
 
-def load_token() -> str:
-    """Читает Bearer-токен из переменной окружения или TOKEN_FILE (600). Кэширует в памяти."""
-    global _token_cache
+def invalidate_token_cache() -> None:
+    """Сбрасывает кэш Bearer-токена в памяти (Issue #16)."""
+    global _token_cache, _token_file_mtime
     with _token_lock:
-        if _token_cache:
-            return _token_cache
+        _token_cache = None
+        _token_file_mtime = 0.0
+        log.info("Bearer token cache invalidated")
 
-        # 1. Direct env variable token
+
+def load_token(force_reload: bool = False) -> str:
+    """Читает Bearer-токен из переменной окружения или TOKEN_FILE (600). Кэширует в памяти."""
+    global _token_cache, _token_file_mtime
+    with _token_lock:
         token_env = (
             getattr(config, "TOKEN_RAW", None)
             or os.environ.get("ANYTHINGLLM_API_KEY")
             or os.environ.get("MG_API_KEY")
             or os.environ.get("MG_AUTH_TOKEN")
         )
+        path = config.TOKEN_FILE or (token_env if token_env and os.path.exists(token_env) else None)
+
+        # Check if token file mtime changed
+        if path and os.path.exists(path):
+            try:
+                mtime = os.path.getmtime(path)
+                if mtime > _token_file_mtime:
+                    _token_cache = None
+            except OSError:
+                pass
+
+        if _token_cache and not force_reload:
+            return _token_cache
+
+        # 1. Direct env variable token
         if token_env and not (os.path.isabs(token_env) and os.path.exists(token_env)):
             _token_cache = token_env.strip()
             return _token_cache
 
         # 2. File path token
-        path = config.TOKEN_FILE or (token_env if token_env and os.path.exists(token_env) else None)
         if not path:
             raise RuntimeError("Neither API Key nor MG_TOKEN_FILE environment variable is configured")
         if not os.path.exists(path):
@@ -91,6 +111,10 @@ def load_token() -> str:
             tok = f.read().strip()
         if not tok:
             raise RuntimeError(f"token file empty: {path}")
+        try:
+            _token_file_mtime = os.path.getmtime(path)
+        except OSError:
+            _token_file_mtime = 0.0
         _token_cache = tok
         return tok
 
@@ -197,7 +221,7 @@ def workspace_slugs_for_query(query: str) -> List[str]:
 
 
 # ── Vector-слой (AnythingLLM /vector-search) ────────────────────────────
-def _vector_search_one(slug: str, query: str, top_k: int, threshold: float) -> List[Dict[str, Any]]:
+def _vector_search_one(slug: str, query: str, top_k: int, threshold: float, retry_auth: bool = True) -> List[Dict[str, Any]]:
     tok = load_token()
     try:
         t0 = time.monotonic()
@@ -213,6 +237,17 @@ def _vector_search_one(slug: str, query: str, top_k: int, threshold: float) -> L
                 _ALM_LATENCY.append(dt)
                 if len(_ALM_LATENCY) > _ALM_LATENCY_MAX:
                     del _ALM_LATENCY[: len(_ALM_LATENCY) - _ALM_LATENCY_MAX]
+
+        # Issue #16: Invalidate token and retry once on 401/403 (token expiration)
+        if r.status_code in (401, 403) and retry_auth:
+            log.warning(
+                "vector-search %s received HTTP %s (token expired/invalid). Invalidating token cache and retrying...",
+                slug,
+                r.status_code,
+            )
+            invalidate_token_cache()
+            return _vector_search_one(slug, query, top_k, threshold, retry_auth=False)
+
         if r.status_code != 200:
             log.warning("vector-search %s -> HTTP %s", slug, r.status_code)
             return []
@@ -637,7 +672,8 @@ def hybrid_search(query: str, top_k: int,
 
 
 def store_memory(content: str, title: Optional[str] = None, workspace: Optional[str] = "dmagybot",
-                 metadata: Optional[Dict[str, Any]] = None, tier: Optional[str] = "semantic") -> Dict[str, Any]:
+                 metadata: Optional[Dict[str, Any]] = None, tier: Optional[str] = "semantic",
+                 retry_auth: bool = True) -> Dict[str, Any]:
     """Инструмент активной записи памяти (Issue #7). Загружает сырой текст в AnythingLLM и добавляет эмбеддинги."""
     if not content or not content.strip():
         return {"success": False, "error": "empty content"}
@@ -658,6 +694,10 @@ def store_memory(content: str, title: Optional[str] = None, workspace: Optional[
             json={"textContent": content, "metadata": meta},
             timeout=config.SEARCH_TIMEOUT
         )
+        if r.status_code in (401, 403) and retry_auth:
+            log.warning("store_memory received HTTP %s (token expired). Invalidating token cache and retrying...", r.status_code)
+            invalidate_token_cache()
+            return store_memory(content, title, workspace, metadata, tier, retry_auth=False)
         if not r.ok:
             return {"success": False, "error": f"Upload HTTP {r.status_code}: {r.text}"}
 
