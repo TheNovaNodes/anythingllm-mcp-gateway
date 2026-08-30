@@ -57,19 +57,27 @@ _token_lock = threading.Lock()
 
 
 def load_token() -> str:
-    """Читает Bearer-токен из TOKEN_FILE (600). Кэширует в памяти."""
+    """Читает Bearer-токен из переменной окружения или TOKEN_FILE (600). Кэширует в памяти."""
     global _token_cache
     with _token_lock:
         if _token_cache:
             return _token_cache
-        path = config.TOKEN_FILE
+
+        # 1. Direct env variable token
+        token_env = (
+            getattr(config, "TOKEN_RAW", None)
+            or os.environ.get("ANYTHINGLLM_API_KEY")
+            or os.environ.get("MG_API_KEY")
+            or os.environ.get("MG_AUTH_TOKEN")
+        )
+        if token_env and not (os.path.isabs(token_env) and os.path.exists(token_env)):
+            _token_cache = token_env.strip()
+            return _token_cache
+
+        # 2. File path token
+        path = config.TOKEN_FILE or (token_env if token_env and os.path.exists(token_env) else None)
         if not path:
-            # Fallback to MG_AUTH_TOKEN or ANYTHINGLLM_API_KEY from environment
-            path = os.environ.get("ANYTHINGLLM_API_KEY") or os.environ.get("MG_AUTH_TOKEN")
-            if path:
-                _token_cache = path.strip()
-                return _token_cache
-            raise RuntimeError("MG_TOKEN_FILE environment variable is not configured")
+            raise RuntimeError("Neither API Key nor MG_TOKEN_FILE environment variable is configured")
         if not os.path.exists(path):
             raise RuntimeError(f"token file not found: {path}")
         # Мягкая проверка прав: секрет не должен быть мир-читаемым.
@@ -96,14 +104,21 @@ def workspace_slugs() -> List[str]:
     if os.path.exists(config.MAP_FILE):
         try:
             with open(config.MAP_FILE, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line or line.startswith("#"):
-                        continue
-                    # формат "src_slug real_slug" — берём РЕАЛЬНЫЙ (2-е поле).
-                    parts = line.split()
-                    slugs.append(parts[1] if len(parts) >= 2 else parts[0])
-        except OSError as e:
+                content = f.read().strip()
+                if content.startswith("{") or content.startswith("["):
+                    data = json.loads(content)
+                    if isinstance(data, dict):
+                        slugs = list(data.keys())
+                    elif isinstance(data, list):
+                        slugs = [item["slug"] if isinstance(item, dict) and "slug" in item else str(item) for item in data]
+                else:
+                    for line in content.splitlines():
+                        line = line.strip()
+                        if not line or line.startswith("#"):
+                            continue
+                        parts = line.split()
+                        slugs.append(parts[1] if len(parts) >= 2 else parts[0])
+        except Exception as e:
             log.warning("map read failed: %s", e)
     if slugs:
         return sorted(set(slugs))

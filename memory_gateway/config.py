@@ -11,9 +11,7 @@ ALM_BASE = os.environ.get("MG_ALM_BASE", "http://127.0.0.1:3001/api/v1")
 # ── Секреты (600) ──────────────────────────────────────────────────────
 # Системный Bearer-токен AnythingLLM для vector-search.
 TOKEN_FILE = os.environ.get("MG_TOKEN_FILE")
-if not TOKEN_FILE and "MG_AUTH_TOKEN" in os.environ:
-    # Legacy alias — убрать в следующем мажорном релизе
-    TOKEN_FILE = os.environ.get("MG_AUTH_TOKEN")
+TOKEN_RAW = os.environ.get("ANYTHINGLLM_API_KEY") or os.environ.get("MG_API_KEY") or os.environ.get("MG_AUTH_TOKEN")
 
 # ── Операционная директория (лексический слой) ─────────────────────────
 _repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
