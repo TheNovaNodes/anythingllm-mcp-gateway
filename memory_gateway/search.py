@@ -841,19 +841,21 @@ def _norm_map(text: str) -> tuple:
     """
     norm_chars: List[str] = []
     offsets: List[int] = []
+    append_char = norm_chars.append
+    append_offset = offsets.append
     prev_ws = False
-    for i, ch in enumerate(text):
+    for i, ch in enumerate(text.lower()):
         if ch in '"“”':
             continue
         if ch.isspace():
             if not prev_ws:
-                norm_chars.append(" ")
-                offsets.append(i)
+                append_char(" ")
+                append_offset(i)
                 prev_ws = True
-            continue
-        norm_chars.append(ch.lower())
-        offsets.append(i)
-        prev_ws = False
+        else:
+            append_char(ch)
+            append_offset(i)
+            prev_ws = False
     return "".join(norm_chars), offsets
 
 
