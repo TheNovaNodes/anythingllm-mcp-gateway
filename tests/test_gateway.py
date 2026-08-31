@@ -1,8 +1,8 @@
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 # Import the server tools
-from memory_gateway.server import search_memory, get_document, gateway_health
+from memory_gateway.server import gateway_health, get_document, search_memory
+
 
 def test_search_memory_success():
     with patch("memory_gateway.search.hybrid_search") as mock_search:
@@ -22,7 +22,7 @@ def test_search_memory_exception():
         assert res["count"] == 0
         assert res["degraded"]
         assert "error" in res
-        assert "API Timeout" in res["error"]
+        assert "An internal error occurred" in res["error"]
 
 def test_get_document_success():
     with patch("memory_gateway.search.get_document") as mock_get:
@@ -60,7 +60,7 @@ def test_gateway_health_success(mock_get, mock_search, mock_slugs, mock_token):
 
 
 def test_token_invalidation_and_reload(tmp_path, monkeypatch):
-    from memory_gateway import search, config
+    from memory_gateway import config, search
     
     token_file = tmp_path / "test_token.txt"
     token_file.write_text("token-v1")

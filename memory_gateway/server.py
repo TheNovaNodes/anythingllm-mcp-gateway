@@ -11,7 +11,7 @@
 __version__ = "0.2.0"
 import os
 import time
-from typing import Any, Dict, Optional
+from typing import Any
 
 try:
     from mcp.server.fastmcp import FastMCP
@@ -35,10 +35,10 @@ except TypeError:
 
 @mcp.tool(name="search_memory")
 def search_memory(query: str, top_k: int = config.DEFAULT_TOP_K,
-                  workspace: Optional[str] = None,
+                  workspace: str | None = None,
                   expand_context: bool = config.EXPAND_CONTEXT_DEFAULT,
-                  max_token_budget: Optional[int] = None,
-                  tier: Optional[str] = None) -> Dict[str, Any]:
+                  max_token_budget: int | None = None,
+                  tier: str | None = None) -> dict[str, Any]:
     """Гибридный семантический поиск по памяти лаборатории (vector + lexical, RRF).
 
     Args:
@@ -64,10 +64,10 @@ def search_memory(query: str, top_k: int = config.DEFAULT_TOP_K,
             max_token_budget=max_token_budget,
             tier=tier
         )
-    except Exception as e:  # noqa: BLE001 — инструмент не должен ронять сервер
+    except Exception:
         log.exception("search_memory failed")
         return {"query": query, "count": 0, "results": [], "degraded": True,
-                "error": f"{type(e).__name__}: {e}"}
+                "error": "An internal error occurred"}
     out["latency_ms"] = round((time.time() - t0) * 1000.0, 1)
     log.info("search_memory q=%r top_k=%s count=%s degraded=%s %sms",
              (query or "")[:80], top_k, out.get("count"), out.get("degraded"),
@@ -76,10 +76,10 @@ def search_memory(query: str, top_k: int = config.DEFAULT_TOP_K,
 
 
 @mcp.tool(name="store_memory")
-def store_memory(content: str, title: Optional[str] = None,
-                 workspace: Optional[str] = "dmagybot",
-                 metadata: Optional[Dict[str, Any]] = None,
-                 tier: Optional[str] = "semantic") -> Dict[str, Any]:
+def store_memory(content: str, title: str | None = None,
+                 workspace: str | None = "dmagybot",
+                 metadata: dict[str, Any] | None = None,
+                 tier: str | None = "semantic") -> dict[str, Any]:
     """Сохранение новых фактов, диалогов и знаний в семантическую память (Issue #7).
 
     Args:
@@ -103,14 +103,14 @@ def store_memory(content: str, title: Optional[str] = None,
         )
         res["latency_ms"] = round((time.time() - t0) * 1000.0, 1)
         return res
-    except Exception as e:
+    except Exception:
         log.exception("store_memory failed")
-        return {"success": False, "error": f"{type(e).__name__}: {e}"}
+        return {"success": False, "error": "An internal error occurred"}
 
 
 
 @mcp.tool(name="get_document")
-def get_document(doc_id: str, max_chars: int = 20000) -> Dict[str, Any]:
+def get_document(doc_id: str, max_chars: int = 20000) -> dict[str, Any]:
     """Полный сырой текст документа по doc_id (из search_memory results[].doc_id).
 
     Args:
@@ -122,15 +122,15 @@ def get_document(doc_id: str, max_chars: int = 20000) -> Dict[str, Any]:
     """
     try:
         return search.get_document(doc_id, max_chars)
-    except Exception as e:  # noqa: BLE001
+    except Exception:
         log.exception("get_document failed")
-        return {"doc_id": doc_id, "found": False, "error": f"{type(e).__name__}: {e}"}
+        return {"doc_id": doc_id, "found": False, "error": "An internal error occurred"}
 
 
 @mcp.tool(name="gateway_health")
-def gateway_health() -> Dict[str, Any]:
+def gateway_health() -> dict[str, Any]:
     """Диагностика шлюза: доступность токена, lexical.db, число workspace."""
-    health: Dict[str, Any] = {"ok": True}
+    health: dict[str, Any] = {"ok": True}
     # токен
     try:
         tok = search.load_token()

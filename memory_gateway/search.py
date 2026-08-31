@@ -5,16 +5,16 @@
 Fusion (RRF) с дедупликацией по канонической цели документа.
 """
 import concurrent.futures
+import json
 import os
 import re
 import sqlite3
 import threading
 import time
-from typing import Any, Dict, List, Optional
-
-import json
-import requests
 import urllib.parse
+from typing import Any
+
+import requests
 
 from . import config
 from .logger import get_logger
@@ -52,7 +52,7 @@ def _clean_text(text: str) -> str:
     return re.sub(r"[ \t]+\n", "\n", t).strip()
 
 # ── Секрет: кэшируем токен в памяти, читаем один раз ────────────────────
-_token_cache: Optional[str] = None
+_token_cache: str | None = None
 _token_file_mtime: float = 0.0
 _token_lock = threading.Lock()
 
@@ -121,10 +121,10 @@ def load_token(force_reload: bool = False) -> str:
 
 
 # ── Список слагов workspace ─────────────────────────────────────────────
-def workspace_slugs() -> List[str]:
+def workspace_slugs() -> list[str]:
     """Локальный список слагов из MAP_FILE (быстро, без /workspaces).
     Fallback: официальный GET /workspaces."""
-    slugs: List[str] = []
+    slugs: list[str] = []
     if os.path.exists(config.MAP_FILE):
         try:
             with open(config.MAP_FILE, "r", encoding="utf-8") as f:
@@ -162,9 +162,9 @@ def workspace_slugs() -> List[str]:
 
 
 # ── D1: workspace-aware routing ─────────────────────────────────────────
-_WORKSPACE_MAP: Optional[List[Dict[str, Any]]] = None
+_WORKSPACE_MAP: list[dict[str, Any]] | None = None
 
-def _load_workspace_map() -> List[Dict[str, Any]]:
+def _load_workspace_map() -> list[dict[str, Any]]:
     """Load workspace_map.json once, cached in module memory."""
     global _WORKSPACE_MAP
     if _WORKSPACE_MAP is not None:
@@ -182,7 +182,7 @@ def _load_workspace_map() -> List[Dict[str, Any]]:
     return _WORKSPACE_MAP
 
 
-def workspace_slugs_for_query(query: str) -> List[str]:
+def workspace_slugs_for_query(query: str) -> list[str]:
     """D1: Return workspace slugs whose topics match the query.
 
     For each workspace in workspace_map.json, checks if any of its "topics"
@@ -221,7 +221,7 @@ def workspace_slugs_for_query(query: str) -> List[str]:
 
 
 # ── Vector-слой (AnythingLLM /vector-search) ────────────────────────────
-def _vector_search_one(slug: str, query: str, top_k: int, threshold: float, retry_auth: bool = True) -> List[Dict[str, Any]]:
+def _vector_search_one(slug: str, query: str, top_k: int, threshold: float, retry_auth: bool = True) -> list[dict[str, Any]]:
     tok = load_token()
     try:
         t0 = time.monotonic()
@@ -276,7 +276,7 @@ def _vector_search_one(slug: str, query: str, top_k: int, threshold: float, retr
         return []
 
 
-def _doc_id_from_meta(meta: Dict[str, Any], title: str) -> str:
+def _doc_id_from_meta(meta: dict[str, Any], title: str) -> str:
     """Каноническая идентификация документа для дедупликации/get_document.
     Приоритет: relative path (если есть) -> title/basename."""
     for k in ("docpath", "path", "url", "chunkSource"):
@@ -287,7 +287,7 @@ def _doc_id_from_meta(meta: Dict[str, Any], title: str) -> str:
 
 
 # ── Кэш vector-ответов (снижение нагрузки на ALM, ускорение ответов) ───────
-_VECTOR_CACHE: "Dict[tuple, tuple]" = {}
+_VECTOR_CACHE: "dict[tuple, tuple]" = {}
 _VECTOR_CACHE_LOCK = threading.Lock()
 _VECTOR_CACHE_TTL = float(os.environ.get("MG_VECTOR_CACHE_TTL", "120"))
 _VECTOR_CACHE_MAX = int(os.environ.get("MG_VECTOR_CACHE_MAX", "256"))
@@ -331,7 +331,7 @@ def _check_sync_state() -> None:
             log.info("D2: sync state changed, cleared %d cached entries", n)
 
 
-def _vector_cache_get(query: str, top_k: int, threshold: float, workspace) -> "Optional[list]":
+def _vector_cache_get(query: str, top_k: int, threshold: float, workspace) -> "list | None":
     _check_sync_state()
     key = (query, top_k, threshold, workspace)
     with _VECTOR_CACHE_LOCK:
@@ -353,7 +353,7 @@ def _vector_cache_put(query: str, top_k: int, threshold: float, workspace, resul
 
 
 def vector_search(query: str, top_k: int, threshold: float,
-                  workspace: Optional[str] = None) -> List[Dict[str, Any]]:
+                  workspace: str | None = None) -> list[dict[str, Any]]:
     """Векторный поиск по одному или всем workspace (параллельно).
     Результат кэшируется на MG_VECTOR_CACHE_TTL сек (см. _vector_cache_*)."""
     cached = _vector_cache_get(query, top_k, threshold, workspace)
@@ -362,7 +362,7 @@ def vector_search(query: str, top_k: int, threshold: float,
     slugs = [workspace] if workspace else workspace_slugs_for_query(query)
     if not slugs:
         return []
-    hits: List[Dict[str, Any]] = []
+    hits: list[dict[str, Any]] = []
     workers = max(1, min(len(slugs), config.VECTOR_MAX_WORKERS))
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
         futs = [ex.submit(_vector_search_one, s, query, top_k, threshold) for s in slugs]
@@ -384,7 +384,7 @@ def _lexical_connect() -> sqlite3.Connection:
     return sqlite3.connect(uri, uri=True, timeout=config.SEARCH_TIMEOUT)
 
 
-def lexical_search(query: str, top_k: int) -> List[Dict[str, Any]]:
+def lexical_search(query: str, top_k: int) -> list[dict[str, Any]]:
     """FTS5/BM25 полнотекстовый поиск. OR по токенам (recall), BM25 ранжирует."""
     if not os.path.exists(config.LEXICAL_DB):
         log.warning("lexical.db missing: %s", config.LEXICAL_DB)
@@ -425,14 +425,14 @@ def lexical_search(query: str, top_k: int) -> List[Dict[str, Any]]:
 
 
 # ── Слияние: Reciprocal Rank Fusion + дедуп ─────────────────────────────
-def _dedup_key(item: Dict[str, Any]) -> str:
+def _dedup_key(item: dict[str, Any]) -> str:
     """Ключ дедупликации: базовое имя документа, регистронезависимо.
     Сводит vector(title=CHANGELOG.md) и lexical(path=.../CHANGELOG.md)."""
     did = item.get("doc_id") or item.get("title") or ""
     return os.path.basename(str(did)).lower()
 
 
-def _minmax(vals: List[float]) -> Dict[float, float]:
+def _minmax(vals: list[float]) -> dict[float, float]:
     """Min-max нормализация списка в 0..1."""
     if not vals:
         return {}
@@ -443,6 +443,7 @@ def _minmax(vals: List[float]) -> Dict[float, float]:
 
 
 import math
+
 
 def _calculate_temporal_decay(doc_id: str) -> float:
 
@@ -462,7 +463,7 @@ def _calculate_temporal_decay(doc_id: str) -> float:
     return 1.0
 
 
-def _extract_related_docs(text: str) -> List[str]:
+def _extract_related_docs(text: str) -> list[str]:
     """Issue #11: Cross-Document Dependency Graphing.
     Extracts markdown file links [label](path.md) and Python import paths.
     """
@@ -493,7 +494,7 @@ def _fuse_weighted(vector_hits, lexical_hits, top_k):
     v_norm = _minmax(v_scores)
     l_norm = _minmax(l_scores)
 
-    fused: Dict[str, Dict[str, Any]] = {}
+    fused: dict[str, dict[str, Any]] = {}
     for hits, norms, weight in (
         (vector_hits, [v_norm.get(s, 0.0) for s in v_scores], alpha),
         (lexical_hits, [l_norm.get(s, 0.0) for s in l_scores], 1.0 - alpha),
@@ -544,14 +545,14 @@ def _fuse_weighted(vector_hits, lexical_hits, top_k):
 
 
 
-def rrf_merge(vector_hits: List[Dict[str, Any]],
-              lexical_hits: List[Dict[str, Any]],
-              top_k: int) -> List[Dict[str, Any]]:
+def rrf_merge(vector_hits: list[dict[str, Any]],
+              lexical_hits: list[dict[str, Any]],
+              top_k: int) -> list[dict[str, Any]]:
     """RRF: score = sum(1/(rank+K)) по спискам. Дедуп по имени документа.
     При дубле сохраняем самый информативный вариант (с непустым text/workspace)."""
     k = config.RRF_K
     k = config.RRF_K
-    merged: Dict[str, Dict[str, Any]] = {}
+    merged: dict[str, dict[str, Any]] = {}
     for hits in (vector_hits, lexical_hits):
         for rank, item in enumerate(hits, start=1):
             key = _dedup_key(item)
@@ -593,11 +594,11 @@ def rrf_merge(vector_hits: List[Dict[str, Any]],
 
 # ── Публичный гибридный поиск ───────────────────────────────────────────
 def hybrid_search(query: str, top_k: int,
-                  workspace: Optional[str] = None,
+                  workspace: str | None = None,
                   expand_context: bool = config.EXPAND_CONTEXT_DEFAULT,
-                  fusion: Optional[str] = None,
-                  max_token_budget: Optional[int] = None,
-                  tier: Optional[str] = None) -> Dict[str, Any]:
+                  fusion: str | None = None,
+                  max_token_budget: int | None = None,
+                  tier: str | None = None) -> dict[str, Any]:
     """Гибрид: vector + lexical ПАРАЛЛЕЛЬНО, слияние. Возвращает чистый JSON.
 
     degraded=True, если один из слоёв недоступен (второй всё равно вернёт данные).
@@ -611,8 +612,8 @@ def hybrid_search(query: str, top_k: int,
     top_k = max(1, min(int(top_k or config.DEFAULT_TOP_K), config.MAX_TOP_K))
     cand = top_k * config.CANDIDATE_MULT
 
-    vector_hits: List[Dict[str, Any]] = []
-    lexical_hits: List[Dict[str, Any]] = []
+    vector_hits: list[dict[str, Any]] = []
+    lexical_hits: list[dict[str, Any]] = []
     vec_ok = lex_ok = True
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
@@ -671,9 +672,9 @@ def hybrid_search(query: str, top_k: int,
     }
 
 
-def store_memory(content: str, title: Optional[str] = None, workspace: Optional[str] = "dmagybot",
-                 metadata: Optional[Dict[str, Any]] = None, tier: Optional[str] = "semantic",
-                 retry_auth: bool = True) -> Dict[str, Any]:
+def store_memory(content: str, title: str | None = None, workspace: str | None = "dmagybot",
+                 metadata: dict[str, Any] | None = None, tier: str | None = "semantic",
+                 retry_auth: bool = True) -> dict[str, Any]:
     """Инструмент активной записи памяти (Issue #7). Загружает сырой текст в AnythingLLM и добавляет эмбеддинги."""
     if not content or not content.strip():
         return {"success": False, "error": "empty content"}
@@ -699,7 +700,8 @@ def store_memory(content: str, title: Optional[str] = None, workspace: Optional[
             invalidate_token_cache()
             return store_memory(content, title, workspace, metadata, tier, retry_auth=False)
         if not r.ok:
-            return {"success": False, "error": f"Upload HTTP {r.status_code}: {r.text}"}
+            log.error("Upload HTTP %s: %s", r.status_code, r.text)
+            return {"success": False, "error": "An internal error occurred"}
 
         doc_data = r.json()
         docs = doc_data.get("documents", [])
@@ -717,7 +719,8 @@ def store_memory(content: str, title: Optional[str] = None, workspace: Optional[
             timeout=config.SEARCH_TIMEOUT
         )
         if not ws_r.ok:
-            return {"success": False, "error": f"Workspace embedding HTTP {ws_r.status_code}"}
+            log.error("Workspace embedding HTTP %s: %s", ws_r.status_code, ws_r.text)
+            return {"success": False, "error": "An internal error occurred"}
 
         log.info("store_memory success title=%r workspace=%s doc_id=%s", clean_title, target_ws, doc_id)
         return {
@@ -735,7 +738,7 @@ def store_memory(content: str, title: Optional[str] = None, workspace: Optional[
 
 
 # ── get_document: полный сырой текст документа ──────────────────────────
-def alm_latency_stats() -> Dict[str, Any]:
+def alm_latency_stats() -> dict[str, Any]:
     """ALM call latency telemetry (P4). Read-only, thread-safe.
     Returns last/p50/p95 in ms and sample count; None if no samples.
     """
@@ -755,7 +758,7 @@ def alm_latency_stats() -> Dict[str, Any]:
             "p95_ms": round(pct(0.95), 1),
             "inflight_limit": max(1, int(config.VECTOR_MAX_INFLIGHT))}
 
-def get_document(doc_id: str, max_chars: int = 20000) -> Dict[str, Any]:
+def get_document(doc_id: str, max_chars: int = 20000) -> dict[str, Any]:
     """Полный сырой текст документа по doc_id.
 
     Стратегия (raw retrieval, без LLM):
@@ -839,8 +842,8 @@ def _norm_map(text: str) -> tuple:
     искать seed без кавычек/переводов строк, но получить корректную позицию
     в оригинале для последующего разбиения на абзацы.
     """
-    norm_chars: List[str] = []
-    offsets: List[int] = []
+    norm_chars: list[str] = []
+    offsets: list[int] = []
     prev_ws = False
     for i, ch in enumerate(text):
         if ch in '"“”':
@@ -857,7 +860,7 @@ def _norm_map(text: str) -> tuple:
     return "".join(norm_chars), offsets
 
 
-def _lexical_fts_phrase(phrase: str) -> List[tuple]:
+def _lexical_fts_phrase(phrase: str) -> list[tuple]:
     """[(path, content)] по точной фразе FTS5 — точное попадание в нужный документ."""
     if not os.path.exists(config.LEXICAL_DB) or len(phrase) < 8:
         return []
@@ -876,7 +879,7 @@ def _lexical_fts_phrase(phrase: str) -> List[tuple]:
         return []
 
 
-def _lexical_fts_tokens(q: str) -> List[tuple]:
+def _lexical_fts_tokens(q: str) -> list[tuple]:
     """[(path, content)] по токенам FTS5 (AND, не обязательно смежные).
     Не зависит от пути документа — находит нужный док по содержимому.
     """
@@ -897,7 +900,7 @@ def _lexical_fts_tokens(q: str) -> List[tuple]:
         return []
 
 
-def _lexical_candidates(base: str) -> List[tuple]:
+def _lexical_candidates(base: str) -> list[tuple]:
     """Все документы, чей path оканчивается на /base (неоднозначные имена: SKILL.md)."""
     if not base or not os.path.exists(config.LEXICAL_DB):
         return []
@@ -922,7 +925,7 @@ def _strip_uuid_prefix(base: str) -> str:
     )
 
 
-def _expand_result(result: Dict[str, Any]) -> None:
+def _expand_result(result: dict[str, Any]) -> None:
     """Мутирует result: расширяет result['text'] соседними абзацами того же
     документа. Неоднозначность имён (SKILL.md, README.md) снимается через
     FTS5-фразу якоря — выбирается документ, в котором якорь реально есть.
