@@ -1,0 +1,3 @@
+[console_scripts]
+anythingllm-mcp-gateway = memory_gateway.server:main
+nova-memory-gateway = memory_gateway.server:main
