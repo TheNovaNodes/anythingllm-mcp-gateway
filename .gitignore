@@ -11,4 +11,7 @@ env.bak/
 venv.bak/
 .env
 logs/
+bin/
+*.out
+*.egg-info/
 
