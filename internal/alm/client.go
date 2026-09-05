@@ -260,6 +260,10 @@ func (c *Client) SearchWorkspaceVectors(ctx context.Context, slug, query string,
 
 	hits := make([]VectorHit, 0, len(envelope.Results))
 	for _, r := range envelope.Results {
+		if r.Distance >= 0.85 || (r.Score >= 0.99 && r.Distance > 0.5) {
+			continue // Filter out vector drift noise (distance >= 0.85 or score 1.0 anomaly)
+		}
+
 		title := "?"
 		docID := r.ID
 		if r.Metadata != nil {

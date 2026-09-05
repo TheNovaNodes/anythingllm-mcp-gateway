@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	_ "modernc.org/sqlite"
@@ -81,19 +82,46 @@ func (d *DB) Close() error {
 	return nil
 }
 
+var compoundRegex = regexp.MustCompile(`[\p{L}\p{N}_\-\./]+`)
+
 // BuildSafeFTSQuery converts arbitrary user search query into safe FTS5 MATCH expression.
+// It splits compound words on hyphens, underscores, dots, and camelCase boundaries.
 func BuildSafeFTSQuery(query string) string {
-	matches := wordRegex.FindAllString(query, -1)
-	if len(matches) == 0 {
+	rawTokens := compoundRegex.FindAllString(query, -1)
+	if len(rawTokens) == 0 {
 		return ""
 	}
 
-	tokens := make([]string, 0, len(matches))
-	for _, m := range matches {
-		if utf8.RuneCountInString(m) >= 2 {
-			// Escape quotes and wrap in double quotes to prevent FTS5 keyword collision (OR, AND, NOT)
-			clean := strings.ReplaceAll(m, "\"", "")
-			tokens = append(tokens, fmt.Sprintf("\"%s\"", clean))
+	seen := make(map[string]bool)
+	tokens := make([]string, 0, len(rawTokens)*2)
+
+	addToken := func(t string) {
+		tClean := strings.TrimSpace(strings.ReplaceAll(t, "\"", ""))
+		tClean = strings.Trim(tClean, "-_./")
+		if utf8.RuneCountInString(tClean) >= 2 && !seen[strings.ToLower(tClean)] {
+			seen[strings.ToLower(tClean)] = true
+			tokens = append(tokens, fmt.Sprintf("\"%s\"", tClean))
+		}
+	}
+
+	for _, m := range rawTokens {
+		addToken(m)
+
+		// Split on underscores, hyphens, slashes, or dots
+		if strings.ContainsAny(m, "_-./") {
+			parts := strings.FieldsFunc(m, func(r rune) bool {
+				return r == '_' || r == '-' || r == '.' || r == '/'
+			})
+			for _, p := range parts {
+				addToken(p)
+				for _, sp := range splitCamelCase(p) {
+					addToken(sp)
+				}
+			}
+		} else {
+			for _, sp := range splitCamelCase(m) {
+				addToken(sp)
+			}
 		}
 	}
 
@@ -102,6 +130,40 @@ func BuildSafeFTSQuery(query string) string {
 	}
 
 	return strings.Join(tokens, " OR ")
+}
+
+// splitCamelCase splits camelCase/PascalCase words into constituent words.
+// E.g. ChaCha20Poly1305 -> [ChaCha20, Poly1305]
+func splitCamelCase(s string) []string {
+	var words []string
+	var current strings.Builder
+	runes := []rune(s)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if i > 0 && unicode.IsUpper(r) {
+			prev := runes[i-1]
+			// Only split if previous character was lowercase
+			if unicode.IsLower(prev) {
+				if current.Len() > 0 {
+					words = append(words, current.String())
+					current.Reset()
+				}
+			} else if i+1 < len(runes) && unicode.IsLower(runes[i+1]) && unicode.IsUpper(prev) {
+				if current.Len() > 0 {
+					words = append(words, current.String())
+					current.Reset()
+				}
+			}
+		}
+		current.WriteRune(r)
+	}
+	if current.Len() > 0 {
+		words = append(words, current.String())
+	}
+	if len(words) <= 1 {
+		return nil
+	}
+	return words
 }
 
 // Search performs FTS5 full-text BM25 search against docs_fts.
@@ -126,7 +188,7 @@ func (d *DB) Search(ctx context.Context, query, workspace string, topK int) ([]L
 
 	if cleanWS != "" && d.hasWorkspaceCol {
 		querySQL := `
-			SELECT path, title, workspace, bm25(docs_fts) AS rank, snippet(docs_fts, -1, '⟨b⟩', '⟨/b⟩', '…', 12)
+			SELECT path, title, workspace, bm25(docs_fts, 5.0, 10.0, 0.0, 1.0) AS rank, snippet(docs_fts, -1, '⟨b⟩', '⟨/b⟩', '…', 12)
 			FROM docs_fts
 			WHERE docs_fts MATCH ? AND lower(workspace) = ?
 			ORDER BY rank
@@ -135,7 +197,7 @@ func (d *DB) Search(ctx context.Context, query, workspace string, topK int) ([]L
 		rows, err = d.db.QueryContext(ctx, querySQL, matchExpr, cleanWS, topK)
 	} else if d.hasWorkspaceCol {
 		querySQL := `
-			SELECT path, title, workspace, bm25(docs_fts) AS rank, snippet(docs_fts, -1, '⟨b⟩', '⟨/b⟩', '…', 12)
+			SELECT path, title, workspace, bm25(docs_fts, 5.0, 10.0, 0.0, 1.0) AS rank, snippet(docs_fts, -1, '⟨b⟩', '⟨/b⟩', '…', 12)
 			FROM docs_fts
 			WHERE docs_fts MATCH ?
 			ORDER BY rank
@@ -144,7 +206,7 @@ func (d *DB) Search(ctx context.Context, query, workspace string, topK int) ([]L
 		rows, err = d.db.QueryContext(ctx, querySQL, matchExpr, topK)
 	} else {
 		querySQL := `
-			SELECT path, title, '' AS workspace, bm25(docs_fts) AS rank, snippet(docs_fts, -1, '⟨b⟩', '⟨/b⟩', '…', 12)
+			SELECT path, title, '' AS workspace, bm25(docs_fts, 5.0, 10.0, 1.0) AS rank, snippet(docs_fts, -1, '⟨b⟩', '⟨/b⟩', '…', 12)
 			FROM docs_fts
 			WHERE docs_fts MATCH ?
 			ORDER BY rank
