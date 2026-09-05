@@ -50,7 +50,7 @@ func main() {
 	maxInflight := int64(getEnvInt("MG_VECTOR_MAX_INFLIGHT", 4))
 	timeoutSec := getEnvInt("MG_SEARCH_TIMEOUT", 10)
 
-	lexicalDBPath := getEnv("MG_LEXICAL_DB", "")
+	lexicalDBPath := getEnv("MG_LEXICAL_DB", "/root/projects/TheNovaNodes/ops/shared/anythingllm-sync/lexical.db")
 	lexicalMinScore := getEnvFloat("MG_LEXICAL_MIN_SCORE", 0.0)
 
 	almClient := alm.NewClient(alm.ClientConfig{
