@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -107,6 +108,7 @@ func (s *Server) registerTools() {
 		mcp.NewTool("get_document",
 			mcp.WithDescription("Fetch the full raw text content of a document by doc_id or path."),
 			mcp.WithString("doc_id", mcp.Required(), mcp.Description("Document path or canonical ID")),
+			mcp.WithString("workspace", mcp.Description("Optional workspace slug to scope document lookup")),
 			mcp.WithNumber("max_chars", mcp.Description("Maximum characters to retrieve (default: 20000)")),
 		),
 		s.handleGetDocument,
@@ -187,13 +189,18 @@ func (s *Server) handleSearchMemory(ctx context.Context, req mcp.CallToolRequest
 			})
 		}
 		_ = vecGroup.Wait()
+
+		// Sort vectorHits descending by VectorScore before RRF rank assignment
+		sort.Slice(vectorHits, func(i, j int) bool {
+			return vectorHits[i].VectorScore > vectorHits[j].VectorScore
+		})
 		return nil
 	})
 
 	// 2. Lexical Search Layer
 	g.Go(func() error {
 		if s.lexDB != nil && s.lexDB.IsAvailable() {
-			hits, err := s.lexDB.Search(searchCtx, cleanQuery, topK*2)
+			hits, err := s.lexDB.Search(searchCtx, cleanQuery, workspace, topK*2)
 			if err != nil {
 				lexErr = err
 			} else {
@@ -205,8 +212,8 @@ func (s *Server) handleSearchMemory(ctx context.Context, req mcp.CallToolRequest
 
 	_ = g.Wait()
 
-	// 3. Fusion & Deduplication
-	merged := fusion.RRFMerge(vectorHits, lexicalHits, topK, s.rrfK)
+	// 3. Fusion & Deduplication with workspace prioritization boost
+	merged := fusion.RRFMerge(vectorHits, lexicalHits, topK, s.rrfK, cleanQuery)
 
 	// 4. Context Assembly
 	if expandCtx && s.lexDB != nil && s.lexDB.IsAvailable() {
@@ -293,7 +300,8 @@ func (s *Server) handleGetDocument(ctx context.Context, req mcp.CallToolRequest)
 		return mcp.NewToolResultText(string(data)), nil
 	}
 
-	doc, err := s.lexDB.GetDocument(docCtx, docID, maxChars)
+	workspace := req.GetString("workspace", "")
+	doc, err := s.lexDB.GetDocument(docCtx, docID, workspace, maxChars)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Error retrieving document '%s': %v", docID, err)), nil
 	}
