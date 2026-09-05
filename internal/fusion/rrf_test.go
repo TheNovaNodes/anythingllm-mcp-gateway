@@ -121,3 +121,52 @@ func TestTrimToTokenBudget(t *testing.T) {
 		t.Error("expected second item to be marked as TrimmedToBudget")
 	}
 }
+
+func TestRRFMerge_EdgeCases(t *testing.T) {
+	// Both empty
+	emptyRes := RRFMerge(nil, nil, 5, 60)
+	if len(emptyRes) != 0 {
+		t.Errorf("expected 0 results for empty inputs, got %d", len(emptyRes))
+	}
+
+	// Vector only
+	vHits := []alm.VectorHit{
+		{DocID: "doc-v1.md", Title: "V1", Text: "text", VectorScore: 0.8},
+	}
+	vOnly := RRFMerge(vHits, nil, 5, 60)
+	if len(vOnly) != 1 || vOnly[0].Source != "vector" {
+		t.Errorf("expected 1 vector-only item, got %+v", vOnly)
+	}
+
+	// Lexical only
+	lHits := []lexical.LexicalHit{
+		{DocID: "doc-l1.md", Title: "L1", Text: "text", LexicalScore: 1.2},
+	}
+	lOnly := RRFMerge(nil, lHits, 5, 60)
+	if len(lOnly) != 1 || lOnly[0].Source != "lexical" {
+		t.Errorf("expected 1 lexical-only item, got %+v", lOnly)
+	}
+
+	// Zero or negative top_k defaults to 5
+	defTopK := RRFMerge(vHits, lHits, 0, 0)
+	if len(defTopK) != 2 {
+		t.Errorf("expected 2 items, got %d", len(defTopK))
+	}
+}
+
+func TestTrimToTokenBudget_EdgeCases(t *testing.T) {
+	// Zero or negative budget
+	items := []SearchResultItem{
+		{Text: "Some text here"},
+	}
+	out, tokens := TrimToTokenBudget(items, 0)
+	if len(out) != 1 || tokens <= 0 {
+		t.Errorf("expected full items when budget <= 0, got %d, %d", len(out), tokens)
+	}
+
+	// Empty items
+	outEmpty, tokensEmpty := TrimToTokenBudget(nil, 100)
+	if len(outEmpty) != 0 || tokensEmpty != 0 {
+		t.Errorf("expected empty, got %d, %d", len(outEmpty), tokensEmpty)
+	}
+}
