@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/TheNovaNodes/anythingllm-mcp-gateway/internal/alm"
 	"github.com/TheNovaNodes/anythingllm-mcp-gateway/internal/lexical"
@@ -23,18 +24,30 @@ type SearchResultItem struct {
 	TrimmedToBudget bool    `json:"trimmed_to_budget,omitempty"`
 }
 
-// DedupKey returns a normalized lowercase basename for cross-layer document deduplication.
-func DedupKey(docID, title string) string {
+// DedupKey returns a composite key (workspace:stem) for cross-layer document deduplication.
+func DedupKey(workspace, docID, title string) string {
 	target := docID
 	if target == "" {
 		target = title
 	}
 	base := filepath.Base(strings.ReplaceAll(target, "\\", "/"))
-	return strings.ToLower(strings.TrimSpace(base))
+	stem := strings.TrimSuffix(base, filepath.Ext(base))
+	stemClean := strings.ToLower(strings.TrimSpace(stem))
+
+	wsClean := strings.ToLower(strings.TrimSpace(workspace))
+	if wsClean == "" {
+		wsClean = strings.ToLower(lexical.DeriveWorkspaceFromPath(target))
+	}
+
+	if wsClean == "" {
+		return stemClean
+	}
+	return wsClean + ":" + stemClean
 }
 
 // RRFMerge combines vector hits and lexical hits using Reciprocal Rank Fusion.
-func RRFMerge(vectorHits []alm.VectorHit, lexicalHits []lexical.LexicalHit, topK, rrfK int) []SearchResultItem {
+// If query is provided, performs workspace-prioritization boost for matching repositories.
+func RRFMerge(vectorHits []alm.VectorHit, lexicalHits []lexical.LexicalHit, topK, rrfK int, query ...string) []SearchResultItem {
 	if rrfK <= 0 {
 		rrfK = 60
 	}
@@ -53,7 +66,7 @@ func RRFMerge(vectorHits []alm.VectorHit, lexicalHits []lexical.LexicalHit, topK
 
 	// 1. Process Vector Hits
 	for rank, vHit := range vectorHits {
-		key := DedupKey(vHit.DocID, vHit.Title)
+		key := DedupKey(vHit.Workspace, vHit.DocID, vHit.Title)
 		rrfContrib := 1.0 / float64(rrfK+rank+1)
 
 		if c, exists := merged[key]; exists {
@@ -83,7 +96,7 @@ func RRFMerge(vectorHits []alm.VectorHit, lexicalHits []lexical.LexicalHit, topK
 
 	// 2. Process Lexical Hits
 	for rank, lHit := range lexicalHits {
-		key := DedupKey(lHit.DocID, lHit.Title)
+		key := DedupKey(lHit.Workspace, lHit.DocID, lHit.Title)
 		rrfContrib := 1.0 / float64(rrfK+rank+1)
 
 		if c, exists := merged[key]; exists {
@@ -93,11 +106,15 @@ func RRFMerge(vectorHits []alm.VectorHit, lexicalHits []lexical.LexicalHit, topK
 			if c.item.Text == "" {
 				c.item.Text = lHit.Text
 			}
+			if c.item.Workspace == "" {
+				c.item.Workspace = lHit.Workspace
+			}
 		} else {
 			merged[key] = &candidate{
 				item: SearchResultItem{
 					DocID:        lHit.DocID,
 					Title:        lHit.Title,
+					Workspace:    lHit.Workspace,
 					Text:         lHit.Text,
 					LexicalScore: lHit.LexicalScore,
 				},
@@ -107,10 +124,36 @@ func RRFMerge(vectorHits []alm.VectorHit, lexicalHits []lexical.LexicalHit, topK
 		}
 	}
 
-	// 3. Assemble and calculate final scores
+	// Prepare query tokens for workspace prioritization boost
+	var queryTokens []string
+	if len(query) > 0 && strings.TrimSpace(query[0]) != "" {
+		words := strings.FieldsFunc(strings.ToLower(query[0]), func(r rune) bool {
+			return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+		})
+		for _, w := range words {
+			if len([]rune(w)) >= 3 && w != "mcp" && w != "the" && w != "and" && w != "for" {
+				queryTokens = append(queryTokens, w)
+			}
+		}
+	}
+
+	// 3. Assemble and calculate final scores with workspace boost
 	results := make([]SearchResultItem, 0, len(merged))
 	for _, c := range merged {
-		c.item.Score = c.rrfRank
+		boost := 1.0
+		if len(queryTokens) > 0 && c.item.Workspace != "" {
+			wsLower := strings.ToLower(c.item.Workspace)
+			for _, tok := range queryTokens {
+				if strings.Contains(wsLower, tok) {
+					boost *= 1.35
+				}
+			}
+			if boost > 2.5 {
+				boost = 2.5
+			}
+		}
+
+		c.item.Score = c.rrfRank * boost
 		if c.hasVec && c.hasLex {
 			c.item.Source = "hybrid"
 		} else if c.hasVec {

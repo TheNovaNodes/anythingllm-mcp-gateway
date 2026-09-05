@@ -23,7 +23,7 @@ func ExpandContext(ctx context.Context, lexDB *lexical.DB, items []SearchResultI
 			continue
 		}
 
-		doc, err := lexDB.GetDocument(ctx, items[i].DocID, maxChars)
+		doc, err := lexDB.GetDocument(ctx, items[i].DocID, items[i].Workspace, maxChars)
 		if err == nil && doc != nil && doc.Found && doc.Content != "" {
 			// If full content is reasonable length, adopt it as expanded context
 			if len([]rune(doc.Content)) > len([]rune(items[i].Text)) {
