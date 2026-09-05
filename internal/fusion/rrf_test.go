@@ -12,20 +12,22 @@ import (
 
 func TestDedupKey(t *testing.T) {
 	tests := []struct {
-		docID    string
-		title    string
-		expected string
+		workspace string
+		docID     string
+		title     string
+		expected  string
 	}{
-		{"protocols/agents/MANIFEST.md", "", "manifest.md"},
-		{"/root/docs/README.md", "README", "readme.md"},
-		{"", "Architecture.MD", "architecture.md"},
-		{"docs\\win\\PATH.MD", "", "path.md"},
+		{"ws1", "protocols/agents/MANIFEST.md", "", "ws1:manifest"},
+		{"ws1", "/root/docs/README.md", "README", "ws1:readme"},
+		{"", "Architecture.MD", "", "architecture"},
+		{"", "/root/projects/TheNovaNodes/mcp-router/README.md", "", "thenovanodes-mcp-router:readme"},
+		{"docs\\win\\PATH.MD", "", "", "docs\\win\\path.md:"},
 	}
 
 	for _, tc := range tests {
-		actual := DedupKey(tc.docID, tc.title)
+		actual := DedupKey(tc.workspace, tc.docID, tc.title)
 		if actual != tc.expected {
-			t.Errorf("DedupKey(%q, %q) = %q; expected %q", tc.docID, tc.title, actual, tc.expected)
+			t.Errorf("DedupKey(%q, %q, %q) = %q; expected %q", tc.workspace, tc.docID, tc.title, actual, tc.expected)
 		}
 	}
 }
@@ -37,8 +39,8 @@ func TestRRFMerge(t *testing.T) {
 	}
 
 	lHits := []lexical.LexicalHit{
-		{DocID: "docs/architecture.md", Title: "Architecture", Text: "Lexical snippet", LexicalScore: 1.5},
-		{DocID: "docs/unique_lex.md", Title: "Unique Lex", Text: "Lex only", LexicalScore: 1.2},
+		{DocID: "docs/architecture.md", Title: "Architecture", Workspace: "ws1", Text: "Lexical snippet", LexicalScore: 1.5},
+		{DocID: "docs/unique_lex.md", Title: "Unique Lex", Workspace: "ws1", Text: "Lex only", LexicalScore: 1.2},
 	}
 
 	results := RRFMerge(vHits, lHits, 5, 60)
@@ -62,6 +64,41 @@ func TestRRFMerge(t *testing.T) {
 	}
 	if !sources["hybrid"] || !sources["vector"] || !sources["lexical"] {
 		t.Errorf("expected all 3 sources in results: %v", sources)
+	}
+}
+
+func TestRRFMerge_NoCrossWorkspaceCollision(t *testing.T) {
+	// Two separate workspaces with identical filenames
+	vHits := []alm.VectorHit{
+		{DocID: "readme.txt", Title: "README.md", Workspace: "thenovanodes-mcp-router", Text: "Router docs", VectorScore: 0.9},
+		{DocID: "readme.txt", Title: "README.md", Workspace: "thenovanodes-nextcloud-mcp-control", Text: "Nextcloud docs", VectorScore: 0.8},
+	}
+
+	results := RRFMerge(vHits, nil, 5, 60)
+	if len(results) != 2 {
+		t.Fatalf("expected 2 distinct items from 2 workspaces without collision, got %d", len(results))
+	}
+	if results[0].Workspace == results[1].Workspace {
+		t.Errorf("expected distinct workspaces, got %s and %s", results[0].Workspace, results[1].Workspace)
+	}
+}
+
+func TestRRFMerge_WorkspacePrioritizationBoost(t *testing.T) {
+	vHits := []alm.VectorHit{
+		{DocID: "readme.txt", Title: "README.md", Workspace: "thenovanodes-nextcloud-mcp-control", Text: "General docs", VectorScore: 0.70},
+		{DocID: "readme.txt", Title: "README.md", Workspace: "thenovanodes-mcp-router", Text: "Router docs", VectorScore: 0.69},
+	}
+
+	// Without query boost, nextcloud is top-1
+	unboosted := RRFMerge(vHits, nil, 5, 60)
+	if unboosted[0].Workspace != "thenovanodes-nextcloud-mcp-control" {
+		t.Errorf("expected unboosted top to be nextcloud, got %s", unboosted[0].Workspace)
+	}
+
+	// With query containing "router", mcp-router gets boosted to top-1
+	boosted := RRFMerge(vHits, nil, 5, 60, "mcp router architecture")
+	if boosted[0].Workspace != "thenovanodes-mcp-router" {
+		t.Errorf("expected boosted top to be mcp-router, got %s", boosted[0].Workspace)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -16,9 +17,10 @@ var wordRegex = regexp.MustCompile(`[\p{L}\p{N}_]+`)
 
 // DB manages read-only queries to the SQLite FTS5 index.
 type DB struct {
-	dbPath   string
-	db       *sql.DB
-	minScore float64
+	dbPath          string
+	db              *sql.DB
+	minScore        float64
+	hasWorkspaceCol bool
 }
 
 // NewDB initializes a read-only SQLite connection to the FTS5 database.
@@ -44,6 +46,23 @@ func NewDB(dbPath string, minScore float64) (*DB, error) {
 
 	db.SetMaxOpenConns(10)
 	db.SetMaxIdleConns(5)
+
+	// Detect if docs_fts has workspace column
+	rows, err := db.Query("PRAGMA table_info(docs_fts)")
+	if err == nil {
+		for rows.Next() {
+			var cid int
+			var name, ctype string
+			var notnull, pk int
+			var dfltValue interface{}
+			if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err == nil {
+				if strings.EqualFold(name, "workspace") {
+					d.hasWorkspaceCol = true
+				}
+			}
+		}
+		rows.Close()
+	}
 
 	d.db = db
 	return d, nil
@@ -86,7 +105,7 @@ func BuildSafeFTSQuery(query string) string {
 }
 
 // Search performs FTS5 full-text BM25 search against docs_fts.
-func (d *DB) Search(ctx context.Context, query string, topK int) ([]LexicalHit, error) {
+func (d *DB) Search(ctx context.Context, query, workspace string, topK int) ([]LexicalHit, error) {
 	if !d.IsAvailable() {
 		return nil, nil
 	}
@@ -100,15 +119,40 @@ func (d *DB) Search(ctx context.Context, query string, topK int) ([]LexicalHit, 
 		topK = 5
 	}
 
-	querySQL := `
-		SELECT path, title, bm25(docs_fts) AS rank, snippet(docs_fts, -1, '⟨b⟩', '⟨/b⟩', '…', 12)
-		FROM docs_fts
-		WHERE docs_fts MATCH ?
-		ORDER BY rank
-		LIMIT ?
-	`
+	cleanWS := strings.ToLower(strings.TrimSpace(workspace))
 
-	rows, err := d.db.QueryContext(ctx, querySQL, matchExpr, topK)
+	var rows *sql.Rows
+	var err error
+
+	if cleanWS != "" && d.hasWorkspaceCol {
+		querySQL := `
+			SELECT path, title, workspace, bm25(docs_fts) AS rank, snippet(docs_fts, -1, '⟨b⟩', '⟨/b⟩', '…', 12)
+			FROM docs_fts
+			WHERE docs_fts MATCH ? AND lower(workspace) = ?
+			ORDER BY rank
+			LIMIT ?
+		`
+		rows, err = d.db.QueryContext(ctx, querySQL, matchExpr, cleanWS, topK)
+	} else if d.hasWorkspaceCol {
+		querySQL := `
+			SELECT path, title, workspace, bm25(docs_fts) AS rank, snippet(docs_fts, -1, '⟨b⟩', '⟨/b⟩', '…', 12)
+			FROM docs_fts
+			WHERE docs_fts MATCH ?
+			ORDER BY rank
+			LIMIT ?
+		`
+		rows, err = d.db.QueryContext(ctx, querySQL, matchExpr, topK)
+	} else {
+		querySQL := `
+			SELECT path, title, '' AS workspace, bm25(docs_fts) AS rank, snippet(docs_fts, -1, '⟨b⟩', '⟨/b⟩', '…', 12)
+			FROM docs_fts
+			WHERE docs_fts MATCH ?
+			ORDER BY rank
+			LIMIT ?
+		`
+		rows, err = d.db.QueryContext(ctx, querySQL, matchExpr, topK)
+	}
+
 	if err != nil {
 		return nil, fmt.Errorf("lexical FTS5 query failed: %w", err)
 	}
@@ -116,9 +160,17 @@ func (d *DB) Search(ctx context.Context, query string, topK int) ([]LexicalHit, 
 
 	var hits []LexicalHit
 	for rows.Next() {
-		var path, title, snip string
+		var path, title, ws, snip string
 		var rank float64
-		if err := rows.Scan(&path, &title, &rank, &snip); err != nil {
+		if err := rows.Scan(&path, &title, &ws, &rank, &snip); err != nil {
+			continue
+		}
+
+		if ws == "" {
+			ws = DeriveWorkspaceFromPath(path)
+		}
+
+		if cleanWS != "" && !d.hasWorkspaceCol && !strings.EqualFold(ws, cleanWS) {
 			continue
 		}
 
@@ -134,6 +186,7 @@ func (d *DB) Search(ctx context.Context, query string, topK int) ([]LexicalHit, 
 		hits = append(hits, LexicalHit{
 			DocID:        path,
 			Title:        title,
+			Workspace:    ws,
 			Text:         cleanSnip,
 			LexicalScore: score,
 		})
@@ -142,10 +195,10 @@ func (d *DB) Search(ctx context.Context, query string, topK int) ([]LexicalHit, 
 	return hits, nil
 }
 
-// GetDocument retrieves the raw content of a document by path or title.
-func (d *DB) GetDocument(ctx context.Context, docID string, maxChars int) (*DocumentResult, error) {
+// GetDocument retrieves the raw content of a document by path or within a specific workspace.
+func (d *DB) GetDocument(ctx context.Context, docID, workspace string, maxChars int) (*DocumentResult, error) {
 	if !d.IsAvailable() {
-		return &DocumentResult{DocID: docID, Found: false}, nil
+		return &DocumentResult{DocID: docID, Workspace: workspace, Found: false}, nil
 	}
 
 	if maxChars <= 0 {
@@ -157,22 +210,54 @@ func (d *DB) GetDocument(ctx context.Context, docID string, maxChars int) (*Docu
 		return &DocumentResult{Found: false}, nil
 	}
 
-	// 1. Exact match by path
-	row := d.db.QueryRowContext(ctx, "SELECT path, title, content FROM docs_fts WHERE path = ? LIMIT 1", cleanID)
-	var path, title, content string
-	err := row.Scan(&path, &title, &content)
-	if err != nil && err == sql.ErrNoRows {
-		// 2. Fallback: match by basename suffix
+	cleanWS := strings.ToLower(strings.TrimSpace(workspace))
+	var path, title, ws, content string
+	var err error
+
+	// 1. Exact match by filesystem/relative path
+	if d.hasWorkspaceCol {
+		err = d.db.QueryRowContext(ctx, "SELECT path, title, workspace, content FROM docs_fts WHERE path = ? LIMIT 1", cleanID).Scan(&path, &title, &ws, &content)
+	} else {
+		err = d.db.QueryRowContext(ctx, "SELECT path, title, '' AS workspace, content FROM docs_fts WHERE path = ? LIMIT 1", cleanID).Scan(&path, &title, &ws, &content)
+	}
+
+	// 2. Scoped match within workspace
+	if (err != nil || path == "") && cleanWS != "" {
 		baseName := filepathBase(cleanID)
-		row = d.db.QueryRowContext(ctx, "SELECT path, title, content FROM docs_fts WHERE path LIKE ? OR title = ? LIMIT 1", "%/"+baseName, cleanID)
-		err = row.Scan(&path, &title, &content)
+		baseStem := strings.TrimSuffix(baseName, filepath.Ext(baseName))
+
+		if d.hasWorkspaceCol {
+			err = d.db.QueryRowContext(ctx, `
+				SELECT path, title, workspace, content FROM docs_fts 
+				WHERE lower(workspace) = ? AND (path LIKE ? OR title LIKE ? OR title = ?) LIMIT 1
+			`, cleanWS, "%/"+baseName, "%"+baseStem+"%", baseName).Scan(&path, &title, &ws, &content)
+		} else {
+			err = d.db.QueryRowContext(ctx, `
+				SELECT path, title, '' AS workspace, content FROM docs_fts 
+				WHERE path LIKE ? AND (path LIKE ? OR title = ?) LIMIT 1
+			`, "%/"+cleanWS+"/%", "%/"+baseName, baseName).Scan(&path, &title, &ws, &content)
+		}
+	}
+
+	// 3. Fallback when workspace is not specified
+	if (err != nil || path == "") && cleanWS == "" {
+		baseName := filepathBase(cleanID)
+		if d.hasWorkspaceCol {
+			err = d.db.QueryRowContext(ctx, "SELECT path, title, workspace, content FROM docs_fts WHERE path LIKE ? OR title = ? LIMIT 1", "%/"+baseName, cleanID).Scan(&path, &title, &ws, &content)
+		} else {
+			err = d.db.QueryRowContext(ctx, "SELECT path, title, '' AS workspace, content FROM docs_fts WHERE path LIKE ? OR title = ? LIMIT 1", "%/"+baseName, cleanID).Scan(&path, &title, &ws, &content)
+		}
 	}
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return &DocumentResult{DocID: docID, Found: false}, nil
+			return &DocumentResult{DocID: docID, Workspace: workspace, Found: false}, nil
 		}
 		return nil, fmt.Errorf("failed to fetch document: %w", err)
+	}
+
+	if ws == "" {
+		ws = DeriveWorkspaceFromPath(path)
 	}
 
 	runes := []rune(content)
@@ -181,11 +266,39 @@ func (d *DB) GetDocument(ctx context.Context, docID string, maxChars int) (*Docu
 	}
 
 	return &DocumentResult{
-		DocID:   path,
-		Title:   title,
-		Content: content,
-		Found:   true,
+		DocID:     path,
+		Title:     title,
+		Workspace: ws,
+		Content:   content,
+		Found:     true,
 	}, nil
+}
+
+// DeriveWorkspaceFromPath extracts canonical workspace slug from host filesystem path.
+func DeriveWorkspaceFromPath(path string) string {
+	norm := strings.ReplaceAll(path, "\\", "/")
+	parts := strings.Split(norm, "/")
+	for i, part := range parts {
+		if part == "projects" && i+2 < len(parts) {
+			account := parts[i+1]
+			repo := parts[i+2]
+			return SlugFromRepo(account, repo)
+		}
+	}
+	return ""
+}
+
+// SlugFromRepo converts organization and repo names to a normalized workspace slug.
+func SlugFromRepo(account, repo string) string {
+	accClean := strings.ToLower(strings.TrimSpace(account))
+	repoClean := strings.ToLower(strings.TrimSpace(repo))
+	combined := accClean + "-" + repoClean
+	combined = strings.ReplaceAll(combined, "_", "-")
+	combined = strings.ReplaceAll(combined, " ", "-")
+	for strings.Contains(combined, "--") {
+		combined = strings.ReplaceAll(combined, "--", "-")
+	}
+	return strings.Trim(combined, "-")
 }
 
 func fileExists(path string) bool {
