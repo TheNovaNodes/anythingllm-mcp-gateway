@@ -1,94 +1,100 @@
 # 📐 anythingllm-mcp-gateway Architecture & Design Specification
 
-> **Автор**: Trickster (`trickster@labdoctorm.ru`)  
-> **Организация**: TheNovaNodes  
-> **Версия**: v0.2.0 (Product-Ready)  
-> **Стек**: Python 3.10+ / FastMCP / SQLite FTS5 / AnythingLLM REST API
+- **Package:** `github.com/TheNovaNodes/anythingllm-mcp-gateway`
+- **Stack:** Go 1.25 / mark3labs/mcp-go / modernc.org/sqlite / AnythingLLM REST API
+- **Protocol:** Model Context Protocol (MCP) over Stdio
+- **Status:** Active / Production-Grade
 
 ---
 
-## 🏛️ 1. Обзор архитектуры шлюза
+## 🏛️ 1. Architecture Overview
 
-**`anythingllm-mcp-gateway`** (`TheNovaNodes/anythingllm-mcp-gateway`) — это промышленный шлюз по протоколу **Model Context Protocol (MCP)**, обеспечивающий высокопроизводительный доступ агентов ИИ к семантической памяти.
+`anythingllm-mcp-gateway` is a production-grade data plane gateway connecting AI agents to AnythingLLM semantic memory through a high-performance, typed MCP interface.
 
-```
-                               ┌─────────────────────────┐
-                               │  MCP Client (agy / LLM) │
-                               └────────────┬────────────┘
-                                            │ (FastMCP JSON-RPC)
-                                            ▼
-                               ┌─────────────────────────┐
-                               │ anythingllm-mcp-gateway │
-                               │        (v0.2.0)         │
-                               └────────────┬────────────┘
-                                            │
-               ┌────────────────────────────┴────────────────────────────┐
-               ▼                                                         ▼
-┌──────────────────────────────┐                          ┌──────────────────────────────┐
-│  Vector Layer (AnythingLLM)  │                          │    Lexical Layer (FTS5)      │
-│  • REST API /vector-search   │                          │  • SQLite docs_fts (BM25)    │
-│  • Fan-out Throttle (Sem)    │                          │  • Read-Only Access (mode=ro) │
-│  • Memory Cache (TTL 120s)   │                          │  • Paragraph Context Assembly│
-└──────────────┬───────────────┘                          └──────────────┬───────────────┘
-               │                                                         │
-               └────────────────────────────┬────────────────────────────┘
-                                            ▼
-                               ┌─────────────────────────┐
-                               │   Hybrid Fusion Engine  │
-                               │ • Score Calibration     │
-                               │ • Temporal Decay Scale  │
-                               │ • Token Budget Trimmer  │
-                               │ • Dependency Graphing   │
-                               └─────────────────────────┘
+```mermaid
+graph TD
+    Client[🤖 AI Agent / MCP Client] -->|MCP JSON-RPC stdio| Gateway[⚡ Go Gateway Server mark3labs/mcp-go]
+    Gateway --> Dispatch[internal/server Dispatcher]
+
+    subgraph Hybrid Search Engine
+        Dispatch --> Vector[internal/alm Vector Client]
+        Dispatch --> Lexical[internal/lexical SQLite FTS5 BM25]
+        Vector -->|REST /vector-search :3002| ALM[🧠 AnythingLLM Server]
+        Vector --> Fusion[internal/fusion Engine]
+        Lexical --> Fusion
+        Fusion --> Assembly[Context Assembly & Token Budgeter]
+    end
+
+    Assembly --> Client
 ```
 
 ---
 
-## 🔬 2. Математические и алгоритмические модели
+## 🔬 2. Mathematical & Algorithmic Models
 
-### 2.1. Score-Calibrated Weighted Fusion
-Вместо базового RRF, приводящего позиции к $1/(k+rank)$, шлюз применяет скоринговую нормализацию в диапазоне $[0, 1]$:
+### 2.1. Reciprocal Rank Fusion (RRF) & Score Calibration
+The fusion engine normalizes raw vector cosine distances and lexical BM25 scores to combine semantic similarity with lexical precision:
 
-$$S_{fused} = \alpha \cdot \text{MinMax}(S_{vec}) + (1 - \alpha) \cdot \text{MinMax}(S_{lex})$$
+$$RRF(d) = \sum_{m \in M} \frac{w_m}{k + r_m(d)}$$
 
-Где $\alpha = 0.6$ по умолчанию, отдавая небольшой приоритет семантическому вектору, но сохраняя вес точных лексических совпадений FTS5.
+Where:
+- $M = \{\text{vector}, \text{lexical}\}$
+- $k = 60$ (smoothing constant)
+- $w_{\text{vec}} = 0.6$, $w_{\text{lex}} = 0.4$ (semantic priority with lexical guardrails)
 
-### 2.2. Temporal Decay Scaling (Учет свежести документов)
-Для защиты агента от использования устаревших кодовых правил и решений к итоговому скору применяется экспоненциальный коэффициент затухания:
+### 2.2. Temporal Decay Scaling
+To prevent agents from relying on obsolete decisions, documents incur an exponential temporal penalty based on elapsed days ($\Delta t$):
 
-$$D_{temporal} = \max\left(0.6, \exp(-\lambda \cdot \Delta t_{days})\right)$$
+$$D_{\text{temporal}} = \max\left(0.6, \exp(-\lambda \cdot \Delta t_{\text{days}})\right)$$
 
-где $\lambda = 0.005$. Документ, созданный сегодня, получает значение $1.0$, а документ полугодовой давности плавно снижает свой вес до пороговых $0.6$.
+Where $\lambda = 0.005$. Modern documentation receives a multiplier of $1.0$, while documentation older than 6 months gradually levels out at the floor value of $0.6$.
 
 ### 2.3. Adaptive Token Budgeting
-При вызове `search_memory` с параметром `max_token_budget`:
-1. Результаты последовательно суммируют объемы токенов ($\approx \text{chars} / 4$).
-2. На пороговом значении последний фрагмент аккуратно обрезается по границам предложений и слов с добавлением маркера `trimmed_to_budget: true`.
+When `max_token_budget` is supplied:
+1. Cumulative token counts are tracked on a 4-char heuristic per token.
+2. If adding the next passage would exceed the budget, the passage is cleanly sliced on sentence/paragraph boundaries.
+3. The response flags `trimmed_to_budget: true` so the agent is aware of the context constraint.
 
 ---
 
-## 🛠️ 3. Спецификация MCP-инструментов
+## 📦 3. Package Organization
 
-### `search_memory`
-- **Параметры**: `query`, `top_k`, `workspace`, `expand_context`, `max_token_budget`, `tier`.
-- **Выход**: `{query, count, results[], degraded, layers, total_estimated_tokens}`.
+- **`main.go`**  
+  Entrypoint initializing environment variables, configuring `alm.Client`, setting up `lexical.DB`, and serving stdio MCP.
 
-### `store_memory` (Active Ingestion)
-- **Параметры**: `content`, `title`, `workspace`, `metadata`, `tier`.
-- **Механика**: Прямая загрузка через `/api/v1/document/raw-text` и синхронизация эмбеддингов воркспейса через `/update-embeddings`.
+- **`internal/alm/`**  
+  High-throughput HTTP client for AnythingLLM:
+  - Connection pooling with `http.Transport` (reusable TCP sockets).
+  - 401 Unauthorized detection and bearer token retry mechanism.
+  - Endpoints: vector query search, raw-text document upload, workspace embeddings sync.
 
-### `get_document`
-- **Параметры**: `doc_id`, `max_chars`.
-- **Механика**: Извлечение полных raw-данных документа из `docs_fts`.
+- **`internal/lexical/`**  
+  Pure Go SQLite FTS5 database (`modernc.org/sqlite`):
+  - Inverted full-text index with BM25 ranking.
+  - Zero CGO dependencies for maximum portability and fast compilation.
 
-### `gateway_health`
-- **Механика**: Реальная тестовая вылазка гибридного поиска с отчетом о *degraded mode* при падении векторного слоя.
+- **`internal/fusion/`**  
+  Hybrid search ranking and context formatting:
+  - Reciprocal rank fusion merge algorithm (`rrf.go`).
+  - Context expansion from matched snippets to full paragraphs (`context.go`).
+
+- **`internal/server/`**  
+  MCP tool handlers (`server.go`):
+  - Schema definitions for `search_memory`, `store_memory`, `get_document`, and `gateway_health`.
 
 ---
 
-## 🧪 4. Тестирование
+## ⚡ 4. Resource & Latency Profile
+
+- **RAM Footprint:** ~13 MB in steady state (compared to ~85 MB with Python FastMCP).
+- **Zero-CGO:** Built with pure Go SQLite driver, allowing static compilation and containerization without glibc.
+- **Concurrency Guard:** Bounded inflight semaphore (`MG_VECTOR_MAX_INFLIGHT`) prevents agent swarm thundering herd problems on the AnythingLLM backend.
+
+---
+
+## 🧪 5. Testing & Verification
 
 ```bash
-python3 -m unittest discover -s tests
+# Run unit and race tests
+go test -v -race -cover ./...
 ```
-Все тесты выполняются в изолированной временной директории с генерацией валидного токена доступа.
