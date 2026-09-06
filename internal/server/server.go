@@ -200,6 +200,17 @@ func (s *Server) handleSearchMemory(ctx context.Context, req mcp.CallToolRequest
 			slugs = discovered
 		}
 
+		if len(s.allowedOrgs) > 0 {
+			var filtered []string
+			for _, slug := range slugs {
+				org := fusion.DeriveOrgFromWorkspace(slug, "")
+				if fusion.IsOrgAllowed(org, s.allowedOrgs) {
+					filtered = append(filtered, slug)
+				}
+			}
+			slugs = filtered
+		}
+
 		if len(slugs) == 0 {
 			return nil
 		}
@@ -312,6 +323,17 @@ func (s *Server) handleStoreMemory(ctx context.Context, req mcp.CallToolRequest)
 		}
 	}
 
+	if len(s.allowedOrgs) > 0 {
+		checkWS := workspace
+		if checkWS == "" {
+			checkWS = s.almClient.DefaultWorkspace()
+		}
+		org := fusion.DeriveOrgFromWorkspace(checkWS, title)
+		if !fusion.IsOrgAllowed(org, s.allowedOrgs) {
+			return mcp.NewToolResultError(fmt.Sprintf("Access denied: cannot store memory in unauthorized organization for workspace '%s'", checkWS)), nil
+		}
+	}
+
 	storeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
@@ -356,6 +378,13 @@ func (s *Server) handleGetDocument(ctx context.Context, req mcp.CallToolRequest)
 	doc, err := s.lexDB.GetDocument(docCtx, docID, workspace, maxChars)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Error retrieving document '%s': %v", docID, err)), nil
+	}
+
+	if doc.Found && len(s.allowedOrgs) > 0 {
+		org := fusion.DeriveOrgFromWorkspace(doc.Workspace, doc.DocID)
+		if !fusion.IsOrgAllowed(org, s.allowedOrgs) {
+			return mcp.NewToolResultError(fmt.Sprintf("Access denied: document '%s' belongs to unauthorized organization", docID)), nil
+		}
 	}
 
 	data, err := json.MarshalIndent(doc, "", "  ")
