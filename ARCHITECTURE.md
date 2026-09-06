@@ -54,8 +54,10 @@ $$\text{BM25}_{\text{score}} = \text{bm25}(\text{docs\_fts}, 5.0, 10.0, 0.0, 1.0
 Which assigns weights: $\text{path} = 5.0$, $\text{title} = 10.0$, $\text{workspace} = 0.0$, $\text{content} = 1.0$.
 Queries are pre-processed by `BuildSafeFTSQuery` to split `camelCase`, `PascalCase`, `kebab-case`, and `snake_case` compound tokens into exact sub-tokens.
 
-### 2.4. Vector Score Drift Sanitization
-Vector search results returned by AnythingLLM are filtered for distance anomalies. Hits with cosine distance $\ge 0.85$ or score inversion anomalies ($r.\text{Score} \ge 0.99 \land r.\text{Distance} > 0.5$) are discarded prior to RRF processing.
+### 2.4. Vector Score Drift Sanitization & Pure-Vector Cutoff
+Vector search results returned by AnythingLLM are filtered for distance anomalies:
+1. Hits with cosine distance $\ge 0.85$ or score inversion anomalies ($r.\text{Score} \ge 0.99 \land r.\text{Distance} > 0.5$) are discarded prior to RRF processing.
+2. In the fusion layer, pure-vector candidates without lexical corroboration (`hasVec && !hasLex`) are pruned if $\text{VectorScore} < \text{MinPureVectorSimilarity}$ (configurable via `MG_MIN_VECTOR_SIMILARITY`, default $0.55$). This prevents uncalibrated dense embedding noise from injecting out-of-domain false positives.
 
 ### 2.5. Adaptive Token Budgeting
 When `max_token_budget` is supplied:
