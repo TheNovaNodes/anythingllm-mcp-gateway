@@ -7,6 +7,7 @@ type VectorHit struct {
 	Workspace   string  `json:"workspace"`
 	Text        string  `json:"text"`
 	VectorScore float64 `json:"vector_score"`
+	Tier        string  `json:"tier,omitempty"`
 }
 
 // RawVectorResult represents the item inside AnythingLLM vector-search response.
