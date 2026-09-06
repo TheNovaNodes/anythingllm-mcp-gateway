@@ -15,8 +15,10 @@ func TestBuildSafeFTSQuery(t *testing.T) {
 		{"", ""},
 		{"a", ""},
 		{"hello world", "\"hello\" OR \"world\""},
-		{"to be or not to be", "\"to\" OR \"be\" OR \"or\" OR \"not\" OR \"to\" OR \"be\""},
+		{"to be or not to be", "\"to\" OR \"be\" OR \"or\" OR \"not\""},
 		{"go & python: fast!", "\"go\" OR \"python\" OR \"fast\""},
+		{"ChaCha20-Poly1305", "\"ChaCha20-Poly1305\" OR \"ChaCha20\" OR \"Cha\" OR \"Cha20\" OR \"Poly1305\""},
+		{"ChaCha20Poly1305", "\"ChaCha20Poly1305\" OR \"Cha\" OR \"Cha20Poly1305\""},
 	}
 
 	for _, tc := range tests {

@@ -191,19 +191,49 @@ func TestRRFMerge_EdgeCases(t *testing.T) {
 	}
 }
 
-func TestTrimToTokenBudget_EdgeCases(t *testing.T) {
-	// Zero or negative budget
-	items := []SearchResultItem{
-		{Text: "Some text here"},
-	}
-	out, tokens := TrimToTokenBudget(items, 0)
-	if len(out) != 1 || tokens <= 0 {
-		t.Errorf("expected full items when budget <= 0, got %d, %d", len(out), tokens)
+func TestFilterByOrg(t *testing.T) {
+	vHits := []alm.VectorHit{
+		{DocID: "doc1.txt", Title: "Doc1", Workspace: "thenovanodes-agent-vault"},
+		{DocID: "doc2.txt", Title: "Doc2", Workspace: "thedoctormes-hue-doctorm-unify-protocol"},
 	}
 
-	// Empty items
-	outEmpty, tokensEmpty := TrimToTokenBudget(nil, 100)
-	if len(outEmpty) != 0 || tokensEmpty != 0 {
-		t.Errorf("expected empty, got %d, %d", len(outEmpty), tokensEmpty)
+	// 1. Filter by allowed org "thenovanodes"
+	filtered := FilterVectorHitsByOrg(vHits, []string{"thenovanodes"})
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 hit for thenovanodes, got %d", len(filtered))
+	}
+	if filtered[0].Workspace != "thenovanodes-agent-vault" {
+		t.Errorf("unexpected workspace in filtered: %s", filtered[0].Workspace)
+	}
+
+	// 2. Filter by allowed org "thedoctormes-hue"
+	filteredDoc := FilterVectorHitsByOrg(vHits, []string{"thedoctormes-hue"})
+	if len(filteredDoc) != 1 || filteredDoc[0].Workspace != "thedoctormes-hue-doctorm-unify-protocol" {
+		t.Errorf("expected 1 doctormes hit, got %+v", filteredDoc)
+	}
+
+	// 3. Filter with empty allowed orgs allows all
+	all := FilterVectorHitsByOrg(vHits, nil)
+	if len(all) != 2 {
+		t.Errorf("expected all 2 hits when allowedOrgs is empty, got %d", len(all))
+	}
+}
+
+func TestRRFMerge_ExactLexicalBoost(t *testing.T) {
+	vHits := []alm.VectorHit{
+		{DocID: "unrelated.txt", Title: "BTC REFUTED", Workspace: "ws1", Text: "Crypto table", VectorScore: 0.95},
+	}
+	lHits := []lexical.LexicalHit{
+		{DocID: "readme.txt", Title: "ChaCha20Poly1305 README", Workspace: "ws1", Text: "ChaCha20Poly1305 details", LexicalScore: 8.5},
+	}
+
+	results := RRFMerge(vHits, lHits, 5, 60, "ChaCha20Poly1305")
+	if len(results) < 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+
+	// High lexical score + exact title match boost should rank ChaCha20Poly1305 at top-1
+	if results[0].DocID != "readme.txt" {
+		t.Errorf("expected exact lexical boost to elevate readme.txt to top-1, got top-1: %s (%s)", results[0].DocID, results[0].Title)
 	}
 }

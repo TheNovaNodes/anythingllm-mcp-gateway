@@ -14,6 +14,7 @@ type RawVectorResult struct {
 	ID       string                 `json:"id"`
 	Text     string                 `json:"text"`
 	Score    float64                `json:"score"`
+	Distance float64                `json:"distance,omitempty"`
 	Metadata map[string]interface{} `json:"metadata"`
 }
 
