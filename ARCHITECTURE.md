@@ -32,24 +32,32 @@ graph TD
 
 ## 🔬 2. Mathematical & Algorithmic Models
 
-### 2.1. Reciprocal Rank Fusion (RRF) & Score Calibration
-The fusion engine normalizes raw vector cosine distances and lexical BM25 scores to combine semantic similarity with lexical precision:
+### 2.1. Reciprocal Rank Fusion (RRF) & Exact Match Boosting
+The fusion engine combines dense vector search with SQLite FTS5 BM25 lexical search using Reciprocal Rank Fusion augmented with exact match boosting:
 
-$$RRF(d) = \sum_{m \in M} \frac{w_m}{k + r_m(d)}$$
+$$RRF(d) = \left( \sum_{m \in M} \frac{1}{k + r_m(d)} + B_{\text{exact}} \right) \times B_{\text{workspace}}$$
 
 Where:
-- $M = \{\text{vector}, \text{lexical}\}$
+- $M \subseteq \{\text{vector}, \text{lexical}\}$
 - $k = 60$ (smoothing constant)
-- $w_{\text{vec}} = 0.6$, $w_{\text{lex}} = 0.4$ (semantic priority with lexical guardrails)
+- $B_{\text{exact}} = +0.02$ for high-confidence BM25 hits ($\text{score} \ge 5.0$), $+0.03$ for exact title/path substring matches.
+- $B_{\text{workspace}} = 1.35\times$ (max $2.5\times$) for matching query workspace tokens.
 
-### 2.2. Temporal Decay Scaling
-To prevent agents from relying on obsolete decisions, documents incur an exponential temporal penalty based on elapsed days ($\Delta t$):
+### 2.2. Multi-Tenant Organization Isolation
+Before fusion, vector and lexical candidates pass through an organizational filter (`FilterVectorHitsByOrg` / `FilterLexicalHitsByOrg`). Candidates whose derived organization slug does not match the configured `MG_ALLOWED_ORGS` scope are dropped before rank calculation.
 
-$$D_{\text{temporal}} = \max\left(0.6, \exp(-\lambda \cdot \Delta t_{\text{days}})\right)$$
+### 2.3. BM25 Column Weighting & Compound Tokenization
+Lexical search against `docs_fts` uses column-weighted BM25 score calculation:
 
-Where $\lambda = 0.005$. Modern documentation receives a multiplier of $1.0$, while documentation older than 6 months gradually levels out at the floor value of $0.6$.
+$$\text{BM25}_{\text{score}} = \text{bm25}(\text{docs\_fts}, 5.0, 10.0, 0.0, 1.0)$$
 
-### 2.3. Adaptive Token Budgeting
+Which assigns weights: $\text{path} = 5.0$, $\text{title} = 10.0$, $\text{workspace} = 0.0$, $\text{content} = 1.0$.
+Queries are pre-processed by `BuildSafeFTSQuery` to split `camelCase`, `PascalCase`, `kebab-case`, and `snake_case` compound tokens into exact sub-tokens.
+
+### 2.4. Vector Score Drift Sanitization
+Vector search results returned by AnythingLLM are filtered for distance anomalies. Hits with cosine distance $\ge 0.85$ or score inversion anomalies ($r.\text{Score} \ge 0.99 \land r.\text{Distance} > 0.5$) are discarded prior to RRF processing.
+
+### 2.5. Adaptive Token Budgeting
 When `max_token_budget` is supplied:
 1. Cumulative token counts are tracked on a 4-char heuristic per token.
 2. If adding the next passage would exceed the budget, the passage is cleanly sliced on sentence/paragraph boundaries.
