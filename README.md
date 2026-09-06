@@ -56,10 +56,13 @@ The gateway exposes 4 high-level semantic memory tools:
 
 ## ⚡ Key Features
 
-- **Hybrid Fusion Engine:** Combines semantic vector similarity with SQLite FTS5 BM25 lexical ranking via score-calibrated Reciprocal Rank Fusion (RRF).
-- **Adaptive Token Budgeting:** Prevents context window overflows by trimming retrieved passages on natural sentence and paragraph boundaries when `max_token_budget` is set.
+- **Multi-Tenant Organization Isolation:** Filters candidates by allowed organizational scope (`MG_ALLOWED_ORGS`) before RRF fusion, preventing data leakage across distinct projects.
+- **BM25 Compound Tokenizer:** Advanced FTS5 query parser that splits `camelCase`, `PascalCase`, `kebab-case`, `snake_case`, and hyphenated terms (`ChaCha20Poly1305`, `agent-vault`) into exact sub-tokens.
+- **SQLite FTS5 Column Weighting:** Applies custom BM25 column weights (`title=10.0`, `path=5.0`, `content=1.0`) to give document titles priority over long body text.
+- **Vector Drift Sanitization:** Filters out orthogonal vector noise (distance $\ge 0.85$ or score 1.0 distance inversion anomalies) before rank fusion.
+- **Exact RRF Boost:** Adds score-based rank bonuses (+0.02 to +0.03) for high-confidence BM25 hits and exact title/path substring matches.
+- **Adaptive Token Budgeting:** Trims retrieved passages on natural sentence and paragraph boundaries when `max_token_budget` is set.
 - **Context Assembly:** Expands snippet hits to full surrounding paragraph context for coherent agent reasoning.
-- **Temporal Decay:** Applies exponential decay penalties ($\lambda = 0.005$) to obsolete documentation so recent decisions rank higher.
 - **Ultra-Low Overhead:** Written in pure Go (Go 1.25) with zero CGO dependencies (`modernc.org/sqlite`). Consumes ~13 MB RAM in production.
 
 ---
@@ -96,6 +99,8 @@ anythingllm-gateway < /dev/null
   *Default:* `http://127.0.0.1:3002/api/v1`
 - **`MG_API_KEY`** (or `ANYTHINGLLM_API_KEY`)  
   AnythingLLM Bearer API key.
+- **`MG_ALLOWED_ORGS`**  
+  Comma-separated list of organization slugs allowed for multi-tenant isolation (e.g. `thenovanodes`, `thedoctormes-hue`).
 - **`MG_WORKSPACE`** (or `MG_DEFAULT_WORKSPACE`)  
   Default workspace slug for search and storage.  
   *Default:* `default`
