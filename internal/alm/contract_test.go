@@ -23,7 +23,7 @@ func TestLiveContract(t *testing.T) {
 		apiKey = os.Getenv("ANYTHINGLLM_API_KEY")
 	}
 	if apiKey == "" {
-		apiKey = "REDACTED_API_KEY"
+		t.Skip("Skipping live contract test: MG_API_KEY / ANYTHINGLLM_API_KEY not set")
 	}
 
 	// Quick TCP probe with 1s timeout
