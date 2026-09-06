@@ -237,3 +237,40 @@ func TestRRFMerge_ExactLexicalBoost(t *testing.T) {
 		t.Errorf("expected exact lexical boost to elevate readme.txt to top-1, got top-1: %s (%s)", results[0].DocID, results[0].Title)
 	}
 }
+
+func TestRRFMerge_PureVectorSimilarityCutoff(t *testing.T) {
+	// 1. Out-of-domain query: low vector score, 0 lexical matches -> must be dropped (#45)
+	vNoise := []alm.VectorHit{
+		{DocID: "noise1.txt", Title: "Noise 1", Workspace: "ws1", Text: "Some random text", VectorScore: 0.35},
+		{DocID: "noise2.txt", Title: "Noise 2", Workspace: "ws1", Text: "Another text", VectorScore: 0.42},
+	}
+	resNoise := RRFMerge(vNoise, nil, 5, 60, "квантовая хромодинамика")
+	if len(resNoise) != 0 {
+		t.Fatalf("expected 0 results for out-of-domain pure-vector noise, got %d", len(resNoise))
+	}
+
+	// 2. In-domain semantic query: high vector score (>= 0.55), 0 lexical matches -> must be kept
+	vValid := []alm.VectorHit{
+		{DocID: "arch.txt", Title: "Architecture Overview", Workspace: "ws1", Text: "System design", VectorScore: 0.68},
+	}
+	resValid := RRFMerge(vValid, nil, 5, 60, "system architecture design")
+	if len(resValid) != 1 {
+		t.Fatalf("expected 1 result for strong semantic vector hit, got %d", len(resValid))
+	}
+	if resValid[0].DocID != "arch.txt" {
+		t.Errorf("expected arch.txt, got %s", resValid[0].DocID)
+	}
+
+	// 3. Technical keyword query: low vector score (0.30) but strong lexical hit (8.0) -> must be kept (hybrid)
+	lStrong := []lexical.LexicalHit{
+		{DocID: "noise1.txt", Title: "Noise 1", Workspace: "ws1", Text: "Some random text", LexicalScore: 8.0},
+	}
+	resHybrid := RRFMerge(vNoise, lStrong, 5, 60, "technical keyword")
+	if len(resHybrid) != 1 {
+		t.Fatalf("expected 1 hybrid result preserved despite low vector score, got %d", len(resHybrid))
+	}
+	if resHybrid[0].Source != "hybrid" {
+		t.Errorf("expected source to be hybrid, got %s", resHybrid[0].Source)
+	}
+}
+

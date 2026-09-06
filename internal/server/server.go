@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,23 +21,25 @@ import (
 
 // Server coordinates the MCP gateway tools.
 type Server struct {
-	mcpServer      *mcpserver.MCPServer
-	almClient      *alm.Client
-	lexDB          *lexical.DB
-	defaultTopK    int
-	maxTopK        int
-	vectorScoreThr float64
-	rrfK           int
-	allowedOrgs    []string
+	mcpServer        *mcpserver.MCPServer
+	almClient        *alm.Client
+	lexDB            *lexical.DB
+	defaultTopK      int
+	maxTopK          int
+	vectorScoreThr   float64
+	rrfK             int
+	allowedOrgs      []string
+	minPureVectorSim float64
 }
 
 // Config holds configuration parameters for the gateway server.
 type Config struct {
-	DefaultTopK    int
-	MaxTopK        int
-	VectorScoreThr float64
-	RRFK           int
-	AllowedOrgs    []string
+	DefaultTopK      int
+	MaxTopK          int
+	VectorScoreThr   float64
+	RRFK             int
+	AllowedOrgs      []string
+	MinPureVectorSim float64
 }
 
 // NewServer initializes a new MCP Server with the 4 core search & memory tools.
@@ -52,6 +55,18 @@ func NewServer(almClient *alm.Client, lexDB *lexical.DB, cfg Config) *Server {
 	}
 	if cfg.RRFK <= 0 {
 		cfg.RRFK = 60
+	}
+
+	minPureVectorSim := cfg.MinPureVectorSim
+	if minPureVectorSim <= 0 {
+		if envMin := os.Getenv("MG_MIN_VECTOR_SIMILARITY"); envMin != "" {
+			if parsed, err := strconv.ParseFloat(envMin, 64); err == nil && parsed > 0 {
+				minPureVectorSim = parsed
+			}
+		}
+	}
+	if minPureVectorSim <= 0 {
+		minPureVectorSim = fusion.DefaultMinPureVectorSimilarity
 	}
 
 	allowedOrgs := cfg.AllowedOrgs
@@ -72,14 +87,15 @@ func NewServer(almClient *alm.Client, lexDB *lexical.DB, cfg Config) *Server {
 	)
 
 	s := &Server{
-		mcpServer:      mcpSrv,
-		almClient:      almClient,
-		lexDB:          lexDB,
-		defaultTopK:    cfg.DefaultTopK,
-		maxTopK:        cfg.MaxTopK,
-		vectorScoreThr: cfg.VectorScoreThr,
-		rrfK:           cfg.RRFK,
-		allowedOrgs:    allowedOrgs,
+		mcpServer:        mcpSrv,
+		almClient:        almClient,
+		lexDB:            lexDB,
+		defaultTopK:      cfg.DefaultTopK,
+		maxTopK:          cfg.MaxTopK,
+		vectorScoreThr:   cfg.VectorScoreThr,
+		rrfK:             cfg.RRFK,
+		allowedOrgs:      allowedOrgs,
+		minPureVectorSim: minPureVectorSim,
 	}
 
 	s.registerTools()
@@ -158,6 +174,7 @@ func (s *Server) handleSearchMemory(ctx context.Context, req mcp.CallToolRequest
 	workspace := req.GetString("workspace", "")
 	expandCtx := req.GetBool("expand_context", true)
 	tokenBudget := req.GetInt("max_token_budget", 0)
+	tierFilter := strings.ToLower(strings.TrimSpace(req.GetString("tier", "")))
 
 	// Bounded execution timeout: max 6 seconds total
 	searchCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
@@ -233,16 +250,30 @@ func (s *Server) handleSearchMemory(ctx context.Context, req mcp.CallToolRequest
 		lexicalHits = fusion.FilterLexicalHitsByOrg(lexicalHits, s.allowedOrgs)
 	}
 
-	// 4. Fusion & Deduplication with workspace prioritization boost
-	merged := fusion.RRFMerge(vectorHits, lexicalHits, topK, s.rrfK, cleanQuery)
+	// 4. Fusion & Deduplication with workspace prioritization boost and pure-vector similarity cutoff (#45)
+	merged := fusion.RRFMergeWithCutoff(vectorHits, lexicalHits, topK, s.rrfK, s.minPureVectorSim, cleanQuery)
 
-	// 4. Context Assembly
+	// 5. Tier Filtering (#10)
+	if tierFilter != "" {
+		var tierFiltered []fusion.SearchResultItem
+		for _, it := range merged {
+			if strings.EqualFold(it.Tier, tierFilter) || it.Tier == "" {
+				tierFiltered = append(tierFiltered, it)
+			}
+		}
+		merged = tierFiltered
+	}
+
+	// 6. Context Assembly
 	if expandCtx && s.lexDB != nil && s.lexDB.IsAvailable() {
 		merged = fusion.ExpandContext(searchCtx, s.lexDB, merged, 4000)
 	}
 
-	// 5. Token Budgeting
+	// 7. Token Budgeting
 	finalResults, totalTokens := fusion.TrimToTokenBudget(merged, tokenBudget)
+	if finalResults == nil {
+		finalResults = []fusion.SearchResultItem{}
+	}
 
 	degraded := (vecErr != nil) || (lexErr != nil) || (!s.lexDB.IsAvailable())
 
