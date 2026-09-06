@@ -20,6 +20,7 @@ type SearchResultItem struct {
 	Score           float64 `json:"score"`
 	VectorScore     float64 `json:"vector_score,omitempty"`
 	LexicalScore    float64 `json:"lexical_score,omitempty"`
+	Tier            string  `json:"tier,omitempty"`
 	ContextExpanded bool    `json:"context_expanded,omitempty"`
 	TrimmedToBudget bool    `json:"trimmed_to_budget,omitempty"`
 }
@@ -45,9 +46,17 @@ func DedupKey(workspace, docID, title string) string {
 	return wsClean + ":" + stemClean
 }
 
+// DefaultMinPureVectorSimilarity defines minimum cosine similarity required for pure-vector hits (issue #45).
+const DefaultMinPureVectorSimilarity = 0.55
+
 // RRFMerge combines vector hits and lexical hits using Reciprocal Rank Fusion.
 // If query is provided, performs workspace-prioritization boost for matching repositories.
 func RRFMerge(vectorHits []alm.VectorHit, lexicalHits []lexical.LexicalHit, topK, rrfK int, query ...string) []SearchResultItem {
+	return RRFMergeWithCutoff(vectorHits, lexicalHits, topK, rrfK, DefaultMinPureVectorSimilarity, query...)
+}
+
+// RRFMergeWithCutoff combines vector hits and lexical hits with an explicit pure-vector similarity cutoff.
+func RRFMergeWithCutoff(vectorHits []alm.VectorHit, lexicalHits []lexical.LexicalHit, topK, rrfK int, minPureVectorSim float64, query ...string) []SearchResultItem {
 	if rrfK <= 0 {
 		rrfK = 60
 	}
@@ -73,6 +82,9 @@ func RRFMerge(vectorHits []alm.VectorHit, lexicalHits []lexical.LexicalHit, topK
 			c.rrfRank += rrfContrib
 			c.hasVec = true
 			c.item.VectorScore = vHit.VectorScore
+			if c.item.Tier == "" && vHit.Tier != "" {
+				c.item.Tier = vHit.Tier
+			}
 			if c.item.Text == "" {
 				c.item.Text = vHit.Text
 			}
@@ -87,6 +99,7 @@ func RRFMerge(vectorHits []alm.VectorHit, lexicalHits []lexical.LexicalHit, topK
 					Workspace:   vHit.Workspace,
 					Text:        vHit.Text,
 					VectorScore: vHit.VectorScore,
+					Tier:        vHit.Tier,
 				},
 				hasVec:  true,
 				rrfRank: rrfContrib,
@@ -145,6 +158,11 @@ func RRFMerge(vectorHits []alm.VectorHit, lexicalHits []lexical.LexicalHit, topK
 
 	results := make([]SearchResultItem, 0, len(merged))
 	for _, c := range merged {
+		// Pure vector threshold cutoff (#45): discard pure-vector candidates below similarity threshold
+		if c.hasVec && !c.hasLex && minPureVectorSim > 0 && c.item.VectorScore < minPureVectorSim {
+			continue
+		}
+
 		boost := 1.0
 		if len(queryTokens) > 0 && c.item.Workspace != "" {
 			wsLower := strings.ToLower(c.item.Workspace)

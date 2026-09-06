@@ -283,12 +283,20 @@ func (c *Client) SearchWorkspaceVectors(ctx context.Context, slug, query string,
 			docID = title
 		}
 
+		tier := ""
+		if r.Metadata != nil {
+			if t, ok := r.Metadata["tier"].(string); ok {
+				tier = t
+			}
+		}
+
 		hits = append(hits, VectorHit{
 			DocID:       docID,
 			Title:       title,
 			Workspace:   slug,
 			Text:        CleanChunk(r.Text),
 			VectorScore: r.Score,
+			Tier:        tier,
 		})
 	}
 
