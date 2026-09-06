@@ -24,14 +24,14 @@ High-performance Go-based Model Context Protocol (MCP) server for AnythingLLM se
 The gateway exposes 4 high-level semantic memory tools:
 
 - **`search_memory`**  
-  Hybrid search querying AnythingLLM vector indices and local FTS5 lexical storage, fusing results with Reciprocal Rank Fusion (RRF), temporal decay scoring, and context assembly.  
+  Hybrid search querying AnythingLLM vector indices and local FTS5 lexical storage, fusing results with Reciprocal Rank Fusion (RRF), exact match boosting, and context assembly.  
   *Arguments:*  
   — `query` (string, required): The search text or question.  
   — `top_k` (int, optional): Maximum number of passages to return (default: 5, max: 25).  
   — `workspace` (string, optional): Target AnythingLLM workspace slug (defaults to configured workspace).  
   — `expand_context` (bool, optional): Expand matching passages to full surrounding paragraphs.  
   — `max_token_budget` (int, optional): Token budget limit; results are trimmed on sentence boundaries.  
-  — `tier` (string, optional): Memory tier filter (`hot`, `warm`, `cold`).
+  — `tier` (string, optional): Memory tier filter (`episodic`, `semantic`, `procedural`).
 
 - **`store_memory`**  
   Active write tool for uploading raw text, decision logs, and documentation into AnythingLLM vector memory. Automatically updates workspace embeddings.  
@@ -40,7 +40,7 @@ The gateway exposes 4 high-level semantic memory tools:
   — `title` (string, required): Human-readable title or identifier for the document.  
   — `workspace` (string, optional): Target workspace slug.  
   — `metadata` (object, optional): Key-value metadata attached to the record.  
-  — `tier` (string, optional): Memory tier label.
+  — `tier` (string, optional): Memory tier label (`episodic`, `semantic`, `procedural`).
 
 - **`get_document`**  
   Retrieves full raw document text from the local lexical index by document ID.  
@@ -105,9 +105,16 @@ anythingllm-gateway < /dev/null
   Default workspace slug for search and storage.  
   *Default:* `default`
 - **`MG_LEXICAL_DB`**  
-  Optional path to SQLite database for FTS5 lexical search.
+  Optional path to SQLite database for FTS5 lexical search.  
+  *Default:* `/root/projects/TheNovaNodes/ops/shared/anythingllm-sync/lexical.db`
 - **`MG_LEXICAL_MIN_SCORE`**  
   Minimum lexical score threshold (float, default: `0.0`).
+- **`MG_MIN_VECTOR_SIMILARITY`**  
+  Minimum cosine similarity threshold for pure-vector candidates without lexical corroboration (float, default: `0.55`). Discards out-of-domain noise.
+- **`MG_VECTOR_SCORE_THRESHOLD`**  
+  Minimum AnythingLLM vector search score threshold (float, default: `0.13`).
+- **`MG_RRF_K`**  
+  Reciprocal Rank Fusion smoothing constant (int, default: `60`).
 - **`MG_VECTOR_MAX_INFLIGHT`**  
   Maximum concurrent vector API calls to protect the AnythingLLM instance (default: `4`).
 - **`MG_SEARCH_TIMEOUT`**  
