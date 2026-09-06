@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -26,6 +27,7 @@ type Server struct {
 	maxTopK        int
 	vectorScoreThr float64
 	rrfK           int
+	allowedOrgs    []string
 }
 
 // Config holds configuration parameters for the gateway server.
@@ -34,6 +36,7 @@ type Config struct {
 	MaxTopK        int
 	VectorScoreThr float64
 	RRFK           int
+	AllowedOrgs    []string
 }
 
 // NewServer initializes a new MCP Server with the 4 core search & memory tools.
@@ -51,6 +54,17 @@ func NewServer(almClient *alm.Client, lexDB *lexical.DB, cfg Config) *Server {
 		cfg.RRFK = 60
 	}
 
+	allowedOrgs := cfg.AllowedOrgs
+	if len(allowedOrgs) == 0 {
+		if envOrgs := os.Getenv("MG_ALLOWED_ORGS"); envOrgs != "" {
+			for _, o := range strings.Split(envOrgs, ",") {
+				if oClean := strings.TrimSpace(o); oClean != "" {
+					allowedOrgs = append(allowedOrgs, oClean)
+				}
+			}
+		}
+	}
+
 	mcpSrv := mcpserver.NewMCPServer(
 		"anythingllm-mcp-gateway",
 		"1.0.0",
@@ -65,6 +79,7 @@ func NewServer(almClient *alm.Client, lexDB *lexical.DB, cfg Config) *Server {
 		maxTopK:        cfg.MaxTopK,
 		vectorScoreThr: cfg.VectorScoreThr,
 		rrfK:           cfg.RRFK,
+		allowedOrgs:    allowedOrgs,
 	}
 
 	s.registerTools()
@@ -212,7 +227,13 @@ func (s *Server) handleSearchMemory(ctx context.Context, req mcp.CallToolRequest
 
 	_ = g.Wait()
 
-	// 3. Fusion & Deduplication with workspace prioritization boost
+	// 3. Multi-tenant Org Scoping Filter
+	if len(s.allowedOrgs) > 0 {
+		vectorHits = fusion.FilterVectorHitsByOrg(vectorHits, s.allowedOrgs)
+		lexicalHits = fusion.FilterLexicalHitsByOrg(lexicalHits, s.allowedOrgs)
+	}
+
+	// 4. Fusion & Deduplication with workspace prioritization boost
 	merged := fusion.RRFMerge(vectorHits, lexicalHits, topK, s.rrfK, cleanQuery)
 
 	// 4. Context Assembly
