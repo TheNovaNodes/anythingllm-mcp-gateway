@@ -137,7 +137,12 @@ func RRFMerge(vectorHits []alm.VectorHit, lexicalHits []lexical.LexicalHit, topK
 		}
 	}
 
-	// 3. Assemble and calculate final scores with workspace boost
+	// 3. Assemble and calculate final scores with workspace boost and exact match bonus
+	rawQuery := ""
+	if len(query) > 0 {
+		rawQuery = strings.ToLower(strings.TrimSpace(query[0]))
+	}
+
 	results := make([]SearchResultItem, 0, len(merged))
 	for _, c := range merged {
 		boost := 1.0
@@ -150,6 +155,18 @@ func RRFMerge(vectorHits []alm.VectorHit, lexicalHits []lexical.LexicalHit, topK
 			}
 			if boost > 2.5 {
 				boost = 2.5
+			}
+		}
+
+		// Exact lexical boost (#37)
+		if c.hasLex && c.item.LexicalScore >= 5.0 {
+			c.rrfRank += 0.02
+		}
+		if rawQuery != "" && len(rawQuery) >= 3 {
+			titleLower := strings.ToLower(c.item.Title)
+			docLower := strings.ToLower(c.item.DocID)
+			if strings.Contains(titleLower, rawQuery) || strings.Contains(docLower, rawQuery) {
+				c.rrfRank += 0.03
 			}
 		}
 
@@ -174,4 +191,69 @@ func RRFMerge(vectorHits []alm.VectorHit, lexicalHits []lexical.LexicalHit, topK
 	}
 
 	return results
+}
+
+// DeriveOrgFromWorkspace extracts organization slug from workspace name or doc path.
+func DeriveOrgFromWorkspace(workspace, docID string) string {
+	clean := strings.ToLower(strings.TrimSpace(workspace))
+	if clean == "" {
+		clean = strings.ToLower(lexical.DeriveWorkspaceFromPath(docID))
+	}
+	if clean == "" {
+		return ""
+	}
+	parts := strings.Split(clean, "-")
+	if len(parts) >= 2 && (parts[0] == "thedoctormes" || parts[0] == "doctormes") {
+		return "thedoctormes-hue"
+	}
+	if len(parts) >= 1 && (parts[0] == "thenovanodes" || parts[0] == "nova") {
+		return "thenovanodes"
+	}
+	return parts[0]
+}
+
+// FilterVectorHitsByOrg filters out vector hits not belonging to allowed orgs.
+func FilterVectorHitsByOrg(hits []alm.VectorHit, allowedOrgs []string) []alm.VectorHit {
+	if len(allowedOrgs) == 0 {
+		return hits
+	}
+	filtered := make([]alm.VectorHit, 0, len(hits))
+	for _, h := range hits {
+		org := DeriveOrgFromWorkspace(h.Workspace, h.DocID)
+		if isOrgAllowed(org, allowedOrgs) {
+			filtered = append(filtered, h)
+		}
+	}
+	return filtered
+}
+
+// FilterLexicalHitsByOrg filters out lexical hits not belonging to allowed orgs.
+func FilterLexicalHitsByOrg(hits []lexical.LexicalHit, allowedOrgs []string) []lexical.LexicalHit {
+	if len(allowedOrgs) == 0 {
+		return hits
+	}
+	filtered := make([]lexical.LexicalHit, 0, len(hits))
+	for _, h := range hits {
+		org := DeriveOrgFromWorkspace(h.Workspace, h.DocID)
+		if isOrgAllowed(org, allowedOrgs) {
+			filtered = append(filtered, h)
+		}
+	}
+	return filtered
+}
+
+func isOrgAllowed(org string, allowedOrgs []string) bool {
+	if org == "" {
+		return true
+	}
+	for _, a := range allowedOrgs {
+		aClean := strings.ToLower(strings.TrimSpace(a))
+		if aClean == "" || aClean == "*" {
+			return true
+		}
+		if strings.EqualFold(org, aClean) || strings.Contains(org, aClean) || strings.Contains(aClean, org) {
+			return true
+		}
+	}
+	return false
 }
