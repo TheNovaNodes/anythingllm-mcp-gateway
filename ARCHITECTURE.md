@@ -59,11 +59,12 @@ Vector search results returned by AnythingLLM are filtered for distance anomalie
 1. Hits with cosine distance $\ge 0.85$ or score inversion anomalies ($r.\text{Score} \ge 0.99 \land r.\text{Distance} > 0.5$) are discarded prior to RRF processing.
 2. In the fusion layer, pure-vector candidates without lexical corroboration (`hasVec && !hasLex`) are pruned if $\text{VectorScore} < \text{MinPureVectorSimilarity}$ (configurable via `MG_MIN_VECTOR_SIMILARITY`, default $0.55$). This prevents uncalibrated dense embedding noise from injecting out-of-domain false positives.
 
-### 2.5. Adaptive Token Budgeting
-When `max_token_budget` is supplied:
-1. Cumulative token counts are tracked on a 4-char heuristic per token.
-2. If adding the next passage would exceed the budget, the passage is cleanly sliced on sentence/paragraph boundaries.
-3. The response flags `trimmed_to_budget: true` so the agent is aware of the context constraint.
+### 2.6. FTS5-First Candidate Workspace Routing
+When `workspace` is omitted in `search_memory`:
+1. The local SQLite FTS5 index (`lexical.db`) executes first with sub-millisecond latency (<2ms).
+2. Distinct candidate workspaces are extracted from the top lexical matches and ranked by BM25 relevance (capped at top 5 workspaces).
+3. Dense vector search is executed **exclusively** against these candidate workspaces (plus configured default workspace), instead of querying all 33+ system workspaces.
+4. If no lexical hits are found (abstract/out-of-vocabulary query), vector search falls back to discovered workspaces with bounded concurrency (capped at 8) to eliminate thundering herd timeouts.
 
 ---
 
@@ -72,11 +73,21 @@ When `max_token_budget` is supplied:
 - **`main.go`**  
   Entrypoint initializing environment variables, configuring `alm.Client`, setting up `lexical.DB`, and serving stdio MCP.
 
+- **`cmd/anythingllm-sync/`**  
+  Entrypoint for autonomous background ETL synchronization CLI and systemd daemon. Traverses project Markdown documents, calculates SHA-256 hashes, maintains `etl_ledger.sqlite`, indexes into `lexical.db`, and updates AnythingLLM vector embeddings.
+
 - **`internal/alm/`**  
   High-throughput HTTP client for AnythingLLM:
   - Connection pooling with `http.Transport` (reusable TCP sockets).
   - 401 Unauthorized detection and bearer token retry mechanism.
-  - Endpoints: vector query search, raw-text document upload, workspace embeddings sync.
+  - Endpoints: vector query search, raw-text document upload, workspace embeddings sync, workspace discovery and management.
+
+- **`internal/etl/`**  
+  Autonomous synchronization and deduplication engine:
+  - `dedup.go`: SQLite-backed state store (`modernc.org/sqlite`). Tracks file paths, mtimes, SHA-256 hashes, and tombstones.
+  - `filter.go`: Path filtering, blacklisting (`.git`, `.venv`, `node_modules`, snapshot repos), and workspace slug derivation.
+  - `pipeline.go`: Orchestrator traversing repositories, ensuring workspace presence, and purging tombstones.
+  - `lexical.go`: Manages `docs_fts` FTS5 index in `lexical.db`.
 
 - **`internal/lexical/`**  
   Pure Go SQLite FTS5 database (`modernc.org/sqlite`):
@@ -90,7 +101,7 @@ When `max_token_budget` is supplied:
 
 - **`internal/server/`**  
   MCP tool handlers (`server.go`):
-  - Schema definitions for `search_memory`, `store_memory`, `get_document`, and `gateway_health`.
+  - Schema definitions for `search_memory`, `get_document`, and `gateway_health`.
 
 ---
 

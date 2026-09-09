@@ -419,3 +419,123 @@ func (c *Client) StoreMemory(ctx context.Context, content, title, workspace, tie
 		Tier:      tier,
 	}, nil
 }
+
+// ListWorkspaces retrieves all workspaces.
+func (c *Client) ListWorkspaces(ctx context.Context) ([]Workspace, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, "/workspaces", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	body, _, err := c.doExecute(req)
+	if err != nil {
+		return nil, err
+	}
+
+	var envelope WorkspacesEnvelope
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		var rawList []Workspace
+		if err2 := json.Unmarshal(body, &rawList); err2 == nil {
+			return rawList, nil
+		}
+		return nil, fmt.Errorf("failed to parse workspaces JSON: %w (body: %s)", err, string(body))
+	}
+
+	return envelope.Workspaces, nil
+}
+
+// CreateWorkspace creates a new workspace by name.
+func (c *Client) CreateWorkspace(ctx context.Context, name string) (*Workspace, error) {
+	if strings.TrimSpace(name) == "" {
+		return nil, errors.New("workspace name cannot be empty")
+	}
+
+	req, err := c.newRequest(ctx, http.MethodPost, "/workspace/new", map[string]string{"name": name})
+	if err != nil {
+		return nil, err
+	}
+
+	body, _, err := c.doExecute(req)
+	if err != nil {
+		return nil, err
+	}
+
+	var envelope WorkspaceResponse
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil, fmt.Errorf("failed to parse created workspace JSON: %w", err)
+	}
+
+	if envelope.Workspace.Slug == "" && envelope.Workspace.Name == "" {
+		return nil, fmt.Errorf("unexpected empty workspace response: %s", string(body))
+	}
+
+	return &envelope.Workspace, nil
+}
+
+// UploadRawText uploads raw text content into AnythingLLM document storage and returns the doc location.
+func (c *Client) UploadRawText(ctx context.Context, textContent string, metadata map[string]interface{}) (string, error) {
+	cleanText := strings.TrimSpace(textContent)
+	if cleanText == "" {
+		return "", errors.New("textContent cannot be empty")
+	}
+
+	payload := map[string]interface{}{
+		"textContent": cleanText,
+		"metadata":    metadata,
+	}
+
+	req, err := c.newRequest(ctx, http.MethodPost, "/document/raw-text", payload)
+	if err != nil {
+		return "", err
+	}
+
+	body, _, err := c.doExecute(req)
+	if err != nil {
+		return "", fmt.Errorf("document upload failed: %w", err)
+	}
+
+	var resp RawUploadResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return "", fmt.Errorf("failed to parse upload response: %w", err)
+	}
+
+	if len(resp.Documents) == 0 || resp.Documents[0].Location == "" {
+		return "", fmt.Errorf("no valid document location returned by AnythingLLM: %s", string(body))
+	}
+
+	return resp.Documents[0].Location, nil
+}
+
+// UpdateEmbeddings updates the embedding assignments for a workspace (adding or deleting document locations).
+func (c *Client) UpdateEmbeddings(ctx context.Context, slug string, adds, deletes []string) error {
+	cleanSlug := strings.TrimSpace(slug)
+	if cleanSlug == "" {
+		return errors.New("workspace slug cannot be empty")
+	}
+
+	if adds == nil {
+		adds = []string{}
+	}
+	if deletes == nil {
+		deletes = []string{}
+	}
+
+	payload := map[string]interface{}{
+		"adds":    adds,
+		"deletes": deletes,
+	}
+
+	path := fmt.Sprintf("/workspace/%s/update-embeddings", url.PathEscape(cleanSlug))
+	req, err := c.newRequest(ctx, http.MethodPost, path, payload)
+	if err != nil {
+		return err
+	}
+
+	_, _, err = c.doExecute(req)
+	if err != nil {
+		return fmt.Errorf("failed to update embeddings for workspace '%s': %w", cleanSlug, err)
+	}
+
+	return nil
+}
+

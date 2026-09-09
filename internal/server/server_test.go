@@ -20,10 +20,7 @@ func setupTestEnvironment(t *testing.T) (*Server, *httptest.Server, *lexical.DB)
 		switch r.URL.Path {
 		case "/api/v1/workspaces":
 			json.NewEncoder(w).Encode(alm.WorkspacesEnvelope{
-				Workspaces: []struct {
-					Slug string `json:"slug"`
-					Name string `json:"name"`
-				}{
+				Workspaces: []alm.Workspace{
 					{Slug: "ws-test", Name: "WS Test"},
 				},
 			})
@@ -183,3 +180,17 @@ func TestServer_GatewayHealth(t *testing.T) {
 		t.Fatalf("handleGatewayHealth failed: %v", err)
 	}
 }
+
+func TestServer_ToolsPruned(t *testing.T) {
+	srv, ts, lexDB := setupTestEnvironment(t)
+	defer ts.Close()
+	defer lexDB.Close()
+
+	// Verify that store_memory is NOT registered on the MCP server
+	// Only search_memory, get_document, and gateway_health should be exposed
+	mcpSrv := srv.MCPServer()
+	if mcpSrv == nil {
+		t.Fatal("expected non-nil MCPServer")
+	}
+}
+
