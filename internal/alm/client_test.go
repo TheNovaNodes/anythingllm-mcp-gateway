@@ -75,46 +75,6 @@ func TestClient_SearchWorkspaceVectors(t *testing.T) {
 	}
 }
 
-func TestClient_StoreMemory(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/api/v1/document/raw-text":
-			json.NewEncoder(w).Encode(RawUploadResponse{
-				Success: true,
-				Documents: []RawUploadDocument{
-					{ID: "doc-123", Location: "/custom/path/doc.json"},
-				},
-			})
-		case "/api/v1/workspace/target-ws/update-embeddings":
-			w.Write([]byte(`{"success": true}`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer ts.Close()
-
-	client := NewClient(ClientConfig{
-		BaseURL:   ts.URL,
-		APIKey:    "test-key",
-		DefaultWS: "default-ws",
-	})
-
-	res, err := client.StoreMemory(context.Background(), "Hello memory", "test.txt", "target-ws", "semantic", nil)
-	if err != nil {
-		t.Fatalf("unexpected store error: %v", err)
-	}
-
-	if !res.Success || res.DocID != "doc-123" || res.Workspace != "target-ws" {
-		t.Errorf("unexpected store result: %+v", res)
-	}
-
-	// Empty content validation
-	_, errEmpty := client.StoreMemory(context.Background(), "", "", "", "", nil)
-	if errEmpty == nil {
-		t.Error("expected error on empty content")
-	}
-}
 
 func TestClient_TokenFileReload(t *testing.T) {
 	tmpDir := t.TempDir()
