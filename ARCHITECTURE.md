@@ -119,3 +119,16 @@ When `workspace` is omitted in `search_memory`:
 # Run unit and race tests
 go test -v -race -cover ./...
 ```
+
+---
+
+## ⚙️ 6. Environment Variables
+
+The gateway relies on the following environment variables:
+- `MG_ALLOWED_ORGS`: Comma-separated list of organization slugs allowed for multi-tenant isolation.
+- `MG_MIN_VECTOR_SIMILARITY`: Minimum cosine similarity threshold for pure-vector candidates without lexical corroboration.
+- `MG_ALM_BASE`: AnythingLLM REST API base endpoint.
+- `MG_API_KEY`: AnythingLLM Bearer API key.
+- `MG_WORKSPACE`: Default workspace slug for search and storage.
+- `MG_LEXICAL_DB`: Path to SQLite database for FTS5 lexical search.
+- `MG_RRF_K`: Reciprocal Rank Fusion smoothing constant.
