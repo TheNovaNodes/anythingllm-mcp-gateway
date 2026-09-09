@@ -14,11 +14,13 @@ func TestBuildSafeFTSQuery(t *testing.T) {
 	}{
 		{"", ""},
 		{"a", ""},
-		{"hello world", "\"hello\" OR \"world\""},
+		{"hello world", "\"hello\" OR \"hello\"* OR \"world\" OR \"world\"*"},
 		{"to be or not to be", "\"to\" OR \"be\" OR \"or\" OR \"not\""},
-		{"go & python: fast!", "\"go\" OR \"python\" OR \"fast\""},
-		{"ChaCha20-Poly1305", "\"ChaCha20-Poly1305\" OR \"ChaCha20\" OR \"Cha\" OR \"Cha20\" OR \"Poly1305\""},
-		{"ChaCha20Poly1305", "\"ChaCha20Poly1305\" OR \"Cha\" OR \"Cha20Poly1305\""},
+		{"go & python: fast!", "\"go\" OR \"python\" OR \"python\"* OR \"fast\" OR \"fast\"*"},
+		{"ChaCha20-Poly1305", "\"ChaCha20-Poly1305\" OR \"ChaCha20-Poly1305\"* OR \"ChaCha20\" OR \"ChaCha20\"* OR \"Cha\" OR \"Cha20\" OR \"Cha20\"* OR \"Poly1305\" OR \"Poly1305\"*"},
+		{"ChaCha20Poly1305", "\"ChaCha20Poly1305\" OR \"ChaCha20Poly1305\"* OR \"Cha\" OR \"Cha20Poly1305\" OR \"Cha20Poly1305\"*"},
+		{"маршрутизация", "\"маршрутизация\" OR \"маршрутизация\"* OR \"маршрутиза\"*"},
+		{"deployments", "\"deployments\" OR \"deployments\"* OR \"deploy\"*"},
 	}
 
 	for _, tc := range tests {

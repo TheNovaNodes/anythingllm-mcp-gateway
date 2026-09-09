@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/TheNovaNodes/anythingllm-mcp-gateway/internal/alm"
 	"github.com/TheNovaNodes/anythingllm-mcp-gateway/internal/fusion"
@@ -30,6 +32,9 @@ type Server struct {
 	rrfK             int
 	allowedOrgs      []string
 	minPureVectorSim float64
+	vectorWeight     float64
+	lexicalWeight    float64
+	synergyBonus     float64
 }
 
 // Config holds configuration parameters for the gateway server.
@@ -40,6 +45,9 @@ type Config struct {
 	RRFK             int
 	AllowedOrgs      []string
 	MinPureVectorSim float64
+	VectorWeight     float64
+	LexicalWeight    float64
+	SynergyBonus     float64
 }
 
 // NewServer initializes a new MCP Server with the 4 core search & memory tools.
@@ -80,6 +88,42 @@ func NewServer(almClient *alm.Client, lexDB *lexical.DB, cfg Config) *Server {
 		}
 	}
 
+	vecWeight := cfg.VectorWeight
+	if vecWeight <= 0 {
+		if envW := os.Getenv("MG_VECTOR_WEIGHT"); envW != "" {
+			if parsed, err := strconv.ParseFloat(envW, 64); err == nil && parsed > 0 {
+				vecWeight = parsed
+			}
+		}
+	}
+	if vecWeight <= 0 {
+		vecWeight = 1.0
+	}
+
+	lexWeight := cfg.LexicalWeight
+	if lexWeight <= 0 {
+		if envW := os.Getenv("MG_LEXICAL_WEIGHT"); envW != "" {
+			if parsed, err := strconv.ParseFloat(envW, 64); err == nil && parsed > 0 {
+				lexWeight = parsed
+			}
+		}
+	}
+	if lexWeight <= 0 {
+		lexWeight = 1.0
+	}
+
+	synergy := cfg.SynergyBonus
+	if synergy <= 0 {
+		if envS := os.Getenv("MG_HYBRID_SYNERGY"); envS != "" {
+			if parsed, err := strconv.ParseFloat(envS, 64); err == nil && parsed >= 0 {
+				synergy = parsed
+			}
+		}
+	}
+	if synergy <= 0 {
+		synergy = 0.25
+	}
+
 	mcpSrv := mcpserver.NewMCPServer(
 		"anythingllm-mcp-gateway",
 		"1.0.0",
@@ -96,6 +140,9 @@ func NewServer(almClient *alm.Client, lexDB *lexical.DB, cfg Config) *Server {
 		rrfK:             cfg.RRFK,
 		allowedOrgs:      allowedOrgs,
 		minPureVectorSim: minPureVectorSim,
+		vectorWeight:     vecWeight,
+		lexicalWeight:    lexWeight,
+		synergyBonus:     synergy,
 	}
 
 	s.registerTools()
@@ -118,6 +165,10 @@ func (s *Server) registerTools() {
 			mcp.WithBoolean("expand_context", mcp.Description("Whether to expand matched chunks with surrounding document paragraphs (default: true)")),
 			mcp.WithNumber("max_token_budget", mcp.Description("Optional token budget limit to trim response cleanly")),
 			mcp.WithString("tier", mcp.Description("Optional memory tier filter ('episodic', 'semantic', 'procedural')")),
+			mcp.WithNumber("vector_weight", mcp.Description("Weight multiplier for vector retrieval layer in RRF (default: 1.0)")),
+			mcp.WithNumber("lexical_weight", mcp.Description("Weight multiplier for lexical FTS5 layer in RRF (default: 1.0)")),
+			mcp.WithNumber("min_vector_similarity", mcp.Description("Cosine similarity cutoff for pure-vector hits (default: 0.55)")),
+			mcp.WithNumber("max_context_chars", mcp.Description("Maximum characters for paragraph context expansion (default: 4000)")),
 		),
 		s.handleSearchMemory,
 	)
@@ -164,6 +215,23 @@ func (s *Server) handleSearchMemory(ctx context.Context, req mcp.CallToolRequest
 	tokenBudget := req.GetInt("max_token_budget", 0)
 	tierFilter := strings.ToLower(strings.TrimSpace(req.GetString("tier", "")))
 
+	vectorWeight := req.GetFloat("vector_weight", s.vectorWeight)
+	if vectorWeight <= 0 {
+		vectorWeight = s.vectorWeight
+	}
+	lexicalWeight := req.GetFloat("lexical_weight", s.lexicalWeight)
+	if lexicalWeight <= 0 {
+		lexicalWeight = s.lexicalWeight
+	}
+	minPureVectorSim := req.GetFloat("min_vector_similarity", s.minPureVectorSim)
+	if minPureVectorSim <= 0 {
+		minPureVectorSim = s.minPureVectorSim
+	}
+	maxContextChars := req.GetInt("max_context_chars", 4000)
+	if maxContextChars <= 0 {
+		maxContextChars = 4000
+	}
+
 	// Bounded execution timeout: max 6 seconds total
 	searchCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
 	defer cancel()
@@ -182,39 +250,65 @@ func (s *Server) handleSearchMemory(ctx context.Context, req mcp.CallToolRequest
 		}
 	}
 
-	// 2. Vector Search Layer with FTS5-First workspace candidate pruning
+	// 2. Vector Search Layer with FTS5-First workspace candidate pruning and query keyword slug matching
 	var slugs []string
 	if workspace != "" {
 		slugs = []string{workspace}
-	} else if len(lexicalHits) > 0 {
-		// FTS5-First: Extract distinct workspaces from top lexical matches
+	} else {
 		seenWS := make(map[string]bool)
+
+		// A. Extract distinct workspaces from top lexical matches
 		for _, h := range lexicalHits {
 			wsClean := strings.TrimSpace(h.Workspace)
 			if wsClean != "" && !seenWS[wsClean] {
 				seenWS[wsClean] = true
 				slugs = append(slugs, wsClean)
-				if len(slugs) >= 5 { // cap at top 5 most relevant workspaces
+				if len(slugs) >= 5 { // cap at top 5 most relevant workspaces from lexical
 					break
 				}
 			}
 		}
-		// Also include default workspace if configured and not already included
-		if defWS := s.almClient.DefaultWorkspace(); defWS != "" && !seenWS[defWS] && defWS != "default" {
-			slugs = append(slugs, defWS)
-		}
-	}
 
-	// Fallback if no lexical candidate workspaces were found: discover workspaces from API (capped to prevent thundering herd)
-	if len(slugs) == 0 {
-		discovered, err := s.almClient.GetWorkspaceSlugs(searchCtx)
+		// B. Match query keywords directly against known workspace slugs
+		allSlugs, err := s.almClient.GetWorkspaceSlugs(searchCtx)
 		if err != nil {
 			vecErr = err
-		} else if len(discovered) > 0 {
-			if len(discovered) > 8 {
-				slugs = discovered[:8] // bounded fallback
-			} else {
-				slugs = discovered
+		} else if len(allSlugs) > 0 {
+			qWords := strings.FieldsFunc(strings.ToLower(cleanQuery), func(r rune) bool {
+				return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+			})
+			for _, w := range qWords {
+				if utf8.RuneCountInString(w) < 3 || w == "mcp" || w == "the" || w == "and" {
+					continue
+				}
+				for _, ws := range allSlugs {
+					wsLower := strings.ToLower(ws)
+					if strings.Contains(wsLower, w) && !seenWS[ws] {
+						seenWS[ws] = true
+						slugs = append(slugs, ws)
+						if len(slugs) >= 6 {
+							break
+						}
+					}
+				}
+				if len(slugs) >= 6 {
+					break
+				}
+			}
+
+			// Also include default workspace if configured and not already included
+			if defWS := s.almClient.DefaultWorkspace(); defWS != "" && !seenWS[defWS] && defWS != "default" && len(slugs) < 6 {
+				seenWS[defWS] = true
+				slugs = append(slugs, defWS)
+			}
+
+			// C. Fallback if still no candidate workspaces discovered
+			if len(slugs) == 0 {
+				if len(allSlugs) > 6 {
+					slugs = allSlugs[:6]
+				} else {
+					slugs = allSlugs
+				}
 			}
 		}
 	}
@@ -251,8 +345,16 @@ func (s *Server) handleSearchMemory(ctx context.Context, req mcp.CallToolRequest
 		lexicalHits = fusion.FilterLexicalHitsByOrg(lexicalHits, s.allowedOrgs)
 	}
 
-	// 4. Fusion & Deduplication with workspace prioritization boost and pure-vector similarity cutoff (#45)
-	merged := fusion.RRFMergeWithCutoff(vectorHits, lexicalHits, topK, s.rrfK, s.minPureVectorSim, cleanQuery)
+	// 4. Fusion & Deduplication with workspace prioritization boost, synergy bonus, and pure-vector similarity cutoff
+	merged := fusion.RRFMergeWithOptions(vectorHits, lexicalHits, fusion.RRFOptions{
+		TopK:             topK,
+		RRFK:             s.rrfK,
+		MinPureVectorSim: minPureVectorSim,
+		VectorWeight:     vectorWeight,
+		LexicalWeight:    lexicalWeight,
+		SynergyBonus:     s.synergyBonus,
+		Query:            cleanQuery,
+	})
 
 	// 5. Tier Filtering (#10)
 	if tierFilter != "" {
@@ -267,7 +369,7 @@ func (s *Server) handleSearchMemory(ctx context.Context, req mcp.CallToolRequest
 
 	// 6. Context Assembly
 	if expandCtx && s.lexDB != nil && s.lexDB.IsAvailable() {
-		merged = fusion.ExpandContext(searchCtx, s.lexDB, merged, 4000)
+		merged = fusion.ExpandContext(searchCtx, s.lexDB, merged, maxContextChars)
 	}
 
 	// 7. Token Budgeting
@@ -284,6 +386,7 @@ func (s *Server) handleSearchMemory(ctx context.Context, req mcp.CallToolRequest
 		"results":                finalResults,
 		"degraded":               degraded,
 		"layers":                 map[string]int{"vector": len(vectorHits), "lexical": len(lexicalHits)},
+		"weights":                map[string]float64{"vector": vectorWeight, "lexical": lexicalWeight, "synergy": s.synergyBonus},
 		"total_estimated_tokens": totalTokens,
 		"latency_ms":             time.Since(t0).Milliseconds(),
 	}
