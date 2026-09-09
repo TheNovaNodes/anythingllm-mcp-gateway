@@ -17,7 +17,7 @@ When contributing or interacting with this codebase, observe the following direc
 
 ## Development Workflow & Code Locations
 
-- **MCP Tools:** Defined in `internal/server/server.go`. Use typed `mark3labs/mcp-go` tool definitions (`search_memory`, `store_memory`, `get_document`, `gateway_health`).
+- **MCP Tools:** Defined in `internal/server/server.go`. Use typed `mark3labs/mcp-go` tool definitions (`search_memory`, `get_document`, `gateway_health`).
 - **REST Client Methods:** Placed in `internal/alm/client.go` with models in `internal/alm/types.go`.
 - **Hybrid Retrieval & RRF Fusion:** Located under `internal/fusion/` (`rrf.go`, `budget.go`) and `internal/lexical/` (`db.go`, `tokenizer.go`).
 - **Tests:** Placed alongside code (`*_test.go`) in their respective packages. Always run `go test -v -race ./...` before committing.

@@ -56,10 +56,11 @@ func setupTestEnvironment(t *testing.T) (*Server, *httptest.Server, *lexical.DB)
 		t.Fatal(err)
 	}
 	dbInit.Exec(`
-		CREATE VIRTUAL TABLE docs_fts USING fts5(path, title, content);
-		INSERT INTO docs_fts(path, title, content) VALUES
-			('protocols/doc1.md', 'Title 1', 'Full content paragraph 1\n\nFull content paragraph 2'),
-			('protocols/doc2.md', 'Title 2', 'Lexical only document content');
+		CREATE VIRTUAL TABLE docs_fts USING fts5(path, title, workspace UNINDEXED, content);
+		INSERT INTO docs_fts(path, title, workspace, content) VALUES
+			('protocols/doc1.md', 'Title 1', 'thenovanodes-vault', 'Full content paragraph 1\n\nFull content paragraph 2'),
+			('protocols/doc2.md', 'Title 2', 'thenovanodes-vault', 'Lexical only document content'),
+			('protocols/secret.md', 'Secret Title', 'thedoctormes-hue-doctorm-unify-protocol', 'Top secret document content');
 	`)
 	dbInit.Close()
 
@@ -111,33 +112,6 @@ func TestServer_SearchMemory(t *testing.T) {
 	}
 }
 
-func TestServer_StoreMemory(t *testing.T) {
-	srv, ts, lexDB := setupTestEnvironment(t)
-	defer ts.Close()
-	defer lexDB.Close()
-
-	ctx := context.Background()
-
-	// 1. Success
-	req := mcp.CallToolRequest{}
-	req.Params.Arguments = map[string]interface{}{
-		"content":   "Fact about system",
-		"title":     "fact.md",
-		"workspace": "ws-test",
-	}
-	res, err := srv.handleStoreMemory(ctx, req)
-	if err != nil || res.IsError {
-		t.Fatalf("handleStoreMemory failed: %v, res: %+v", err, res)
-	}
-
-	// 2. Empty content error
-	reqEmpty := mcp.CallToolRequest{}
-	resEmpty, _ := srv.handleStoreMemory(ctx, reqEmpty)
-	if !resEmpty.IsError {
-		t.Error("expected error on empty content")
-	}
-}
-
 func TestServer_GetDocument(t *testing.T) {
 	srv, ts, lexDB := setupTestEnvironment(t)
 	defer ts.Close()
@@ -166,6 +140,60 @@ func TestServer_GetDocument(t *testing.T) {
 	if resNil.IsError {
 		t.Error("expected graceful non-error report on unavailable DB")
 	}
+
+	// 4. Access Control (BAC) - allowed orgs filter
+	srvScoped := NewServer(srv.almClient, lexDB, Config{
+		AllowedOrgs: []string{"thenovanodes"},
+	})
+	// protocols/doc1.md belongs to thenovanodes-vault, so allowed
+	resAllowed, errAllowed := srvScoped.handleGetDocument(ctx, req)
+	if errAllowed != nil || resAllowed.IsError {
+		t.Errorf("expected access allowed for thenovanodes doc: %+v", resAllowed)
+	}
+
+	// Direct request for unauthorized document by doc_id
+	reqSecret := mcp.CallToolRequest{}
+	reqSecret.Params.Arguments = map[string]interface{}{
+		"doc_id": "protocols/secret.md",
+	}
+	resSecret, _ := srvScoped.handleGetDocument(ctx, reqSecret)
+	if !resSecret.IsError {
+		t.Error("expected access denied error when retrieving document from unauthorized org")
+	}
+
+	// Request with explicit unauthorized workspace parameter
+	reqUnauthorized := mcp.CallToolRequest{}
+	reqUnauthorized.Params.Arguments = map[string]interface{}{
+		"doc_id":    "protocols/doc1.md",
+		"workspace": "thedoctormes-hue-doctorm-unify-protocol",
+	}
+	resUnauthorized, _ := srvScoped.handleGetDocument(ctx, reqUnauthorized)
+	if !resUnauthorized.IsError {
+		t.Error("expected access denied error for unauthorized workspace parameter")
+	}
+}
+
+func TestServer_SearchMemory_BAC(t *testing.T) {
+	srv, ts, lexDB := setupTestEnvironment(t)
+	defer ts.Close()
+	defer lexDB.Close()
+
+	ctx := context.Background()
+
+	srvScoped := NewServer(srv.almClient, lexDB, Config{
+		AllowedOrgs: []string{"thenovanodes"},
+	})
+
+	// Querying unauthorized workspace directly should fail fast
+	reqForbidden := mcp.CallToolRequest{}
+	reqForbidden.Params.Arguments = map[string]interface{}{
+		"query":     "test query",
+		"workspace": "thedoctormes-hue-doctorm-unify-protocol",
+	}
+	resForbidden, _ := srvScoped.handleSearchMemory(ctx, reqForbidden)
+	if !resForbidden.IsError {
+		t.Error("expected access denied error when searching forbidden workspace")
+	}
 }
 
 func TestServer_GatewayHealth(t *testing.T) {
@@ -191,6 +219,22 @@ func TestServer_ToolsPruned(t *testing.T) {
 	mcpSrv := srv.MCPServer()
 	if mcpSrv == nil {
 		t.Fatal("expected non-nil MCPServer")
+	}
+
+	tools := mcpSrv.ListTools()
+	if len(tools) != 3 {
+		t.Fatalf("expected exactly 3 exposed tools, got %d: %+v", len(tools), tools)
+	}
+
+	expected := []string{"search_memory", "get_document", "gateway_health"}
+	for _, exp := range expected {
+		if _, ok := tools[exp]; !ok {
+			t.Errorf("expected tool %q to be registered", exp)
+		}
+	}
+
+	if _, ok := tools["store_memory"]; ok {
+		t.Errorf("forbidden tool 'store_memory' is still registered on MCPServer")
 	}
 }
 

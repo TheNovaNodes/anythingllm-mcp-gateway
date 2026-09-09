@@ -15,7 +15,7 @@ last_verified: 2026-09-05
 [![MCP Server](https://img.shields.io/badge/MCP--Server-available-green)](https://modelcontextprotocol.io/)
 [![Status: Active](https://img.shields.io/badge/Status-Active-brightgreen.svg)]()
 
-High-performance Go-based Model Context Protocol (MCP) server for AnythingLLM semantic memory integration (`TheNovaNodes/anythingllm-mcp-gateway`). Provides AI agents with hybrid search (dense vector embeddings + lexical FTS5 BM25), reciprocal rank fusion (RRF), adaptive token budgeting, and real-time memory persistence.
+High-performance Go-based Model Context Protocol (MCP) server for AnythingLLM semantic memory integration (`TheNovaNodes/anythingllm-mcp-gateway`). Provides AI agents with hybrid search (dense vector embeddings + lexical FTS5 BM25), reciprocal rank fusion (RRF), adaptive token budgeting, and multi-tenant organization isolation.
 
 ---
 
