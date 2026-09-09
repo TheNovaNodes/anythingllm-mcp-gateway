@@ -50,7 +50,7 @@ type Config struct {
 	SynergyBonus     float64
 }
 
-// NewServer initializes a new MCP Server with the 4 core search & memory tools.
+// NewServer initializes a new MCP Server with the 3 core search & memory tools.
 func NewServer(almClient *alm.Client, lexDB *lexical.DB, cfg Config) *Server {
 	if cfg.DefaultTopK <= 0 {
 		cfg.DefaultTopK = 5
@@ -253,6 +253,12 @@ func (s *Server) handleSearchMemory(ctx context.Context, req mcp.CallToolRequest
 	// 2. Vector Search Layer with FTS5-First workspace candidate pruning and query keyword slug matching
 	var slugs []string
 	if workspace != "" {
+		if len(s.allowedOrgs) > 0 {
+			org := fusion.DeriveOrgFromWorkspace(workspace, "")
+			if !fusion.IsOrgAllowed(org, s.allowedOrgs) {
+				return mcp.NewToolResultError(fmt.Sprintf("Access denied: workspace '%s' belongs to unauthorized organization", workspace)), nil
+			}
+		}
 		slugs = []string{workspace}
 	} else {
 		seenWS := make(map[string]bool)
@@ -310,6 +316,18 @@ func (s *Server) handleSearchMemory(ctx context.Context, req mcp.CallToolRequest
 					slugs = allSlugs
 				}
 			}
+		}
+
+		// Filter candidate workspaces by allowed orgs if configured
+		if len(s.allowedOrgs) > 0 {
+			var filteredSlugs []string
+			for _, slug := range slugs {
+				org := fusion.DeriveOrgFromWorkspace(slug, "")
+				if fusion.IsOrgAllowed(org, s.allowedOrgs) {
+					filteredSlugs = append(filteredSlugs, slug)
+				}
+			}
+			slugs = filteredSlugs
 		}
 	}
 
@@ -399,39 +417,6 @@ func (s *Server) handleSearchMemory(ctx context.Context, req mcp.CallToolRequest
 	return mcp.NewToolResultText(string(data)), nil
 }
 
-func (s *Server) handleStoreMemory(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	content, err := req.RequireString("content")
-	if err != nil || strings.TrimSpace(content) == "" {
-		return mcp.NewToolResultError("Argument 'content' is required and cannot be empty"), nil
-	}
-
-	title := req.GetString("title", "")
-	workspace := req.GetString("workspace", "")
-	tier := req.GetString("tier", "semantic")
-
-	var metadata map[string]interface{}
-	if argsMap, ok := req.Params.Arguments.(map[string]interface{}); ok {
-		if m, ok := argsMap["metadata"].(map[string]interface{}); ok {
-			metadata = m
-		}
-	}
-
-	storeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	res, err := s.almClient.StoreMemory(storeCtx, content, title, workspace, tier, metadata)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to store memory: %v", err)), nil
-	}
-
-	data, err := json.MarshalIndent(res, "", "  ")
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to format store response: %v", err)), nil
-	}
-
-	return mcp.NewToolResultText(string(data)), nil
-}
-
 func (s *Server) handleGetDocument(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	docID, err := req.RequireString("doc_id")
 	if err != nil || strings.TrimSpace(docID) == "" {
@@ -457,9 +442,27 @@ func (s *Server) handleGetDocument(ctx context.Context, req mcp.CallToolRequest)
 	}
 
 	workspace := req.GetString("workspace", "")
+	if workspace != "" && len(s.allowedOrgs) > 0 {
+		reqOrg := fusion.DeriveOrgFromWorkspace(workspace, "")
+		if !fusion.IsOrgAllowed(reqOrg, s.allowedOrgs) {
+			return mcp.NewToolResultError(fmt.Sprintf("Access denied: workspace '%s' belongs to unauthorized organization", workspace)), nil
+		}
+	}
+
 	doc, err := s.lexDB.GetDocument(docCtx, docID, workspace, maxChars)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Error retrieving document '%s': %v", docID, err)), nil
+	}
+
+	if doc.Found && len(s.allowedOrgs) > 0 {
+		effectiveWS := doc.Workspace
+		if effectiveWS == "" {
+			effectiveWS = workspace
+		}
+		org := fusion.DeriveOrgFromWorkspace(effectiveWS, doc.DocID)
+		if !fusion.IsOrgAllowed(org, s.allowedOrgs) {
+			return mcp.NewToolResultError(fmt.Sprintf("Access denied: document '%s' belongs to unauthorized organization", docID)), nil
+		}
 	}
 
 	data, err := json.MarshalIndent(doc, "", "  ")

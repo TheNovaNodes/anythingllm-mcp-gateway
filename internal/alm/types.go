@@ -38,16 +38,6 @@ type RawUploadResponse struct {
 	Error     string              `json:"error,omitempty"`
 }
 
-// StoreResult represents the formatted output of store_memory.
-type StoreResult struct {
-	Success   bool   `json:"success"`
-	DocID     string `json:"doc_id,omitempty"`
-	Title     string `json:"title"`
-	Location  string `json:"location,omitempty"`
-	Workspace string `json:"workspace"`
-	Tier      string `json:"tier,omitempty"`
-	Error     string `json:"error,omitempty"`
-}
 
 // WorkspacesEnvelope represents /workspaces response.
 type WorkspacesEnvelope struct {

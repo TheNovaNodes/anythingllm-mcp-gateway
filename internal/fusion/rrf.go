@@ -296,7 +296,7 @@ func FilterVectorHitsByOrg(hits []alm.VectorHit, allowedOrgs []string) []alm.Vec
 	filtered := make([]alm.VectorHit, 0, len(hits))
 	for _, h := range hits {
 		org := DeriveOrgFromWorkspace(h.Workspace, h.DocID)
-		if isOrgAllowed(org, allowedOrgs) {
+		if IsOrgAllowed(org, allowedOrgs) {
 			filtered = append(filtered, h)
 		}
 	}
@@ -311,14 +311,15 @@ func FilterLexicalHitsByOrg(hits []lexical.LexicalHit, allowedOrgs []string) []l
 	filtered := make([]lexical.LexicalHit, 0, len(hits))
 	for _, h := range hits {
 		org := DeriveOrgFromWorkspace(h.Workspace, h.DocID)
-		if isOrgAllowed(org, allowedOrgs) {
+		if IsOrgAllowed(org, allowedOrgs) {
 			filtered = append(filtered, h)
 		}
 	}
 	return filtered
 }
 
-func isOrgAllowed(org string, allowedOrgs []string) bool {
+// IsOrgAllowed checks whether an organization is permitted by allowedOrgs.
+func IsOrgAllowed(org string, allowedOrgs []string) bool {
 	if org == "" {
 		return true
 	}
