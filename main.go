@@ -72,10 +72,14 @@ func main() {
 	}
 
 	cfg := server.Config{
-		DefaultTopK:    getEnvInt("MG_DEFAULT_TOP_K", 5),
-		MaxTopK:        getEnvInt("MG_MAX_TOP_K", 25),
-		VectorScoreThr: getEnvFloat("MG_VECTOR_SCORE_THRESHOLD", 0.13),
-		RRFK:           getEnvInt("MG_RRF_K", 60),
+		DefaultTopK:      getEnvInt("MG_DEFAULT_TOP_K", 5),
+		MaxTopK:          getEnvInt("MG_MAX_TOP_K", 25),
+		VectorScoreThr:   getEnvFloat("MG_VECTOR_SCORE_THRESHOLD", 0.13),
+		RRFK:             getEnvInt("MG_RRF_K", 60),
+		VectorWeight:     getEnvFloat("MG_VECTOR_WEIGHT", 1.0),
+		LexicalWeight:    getEnvFloat("MG_LEXICAL_WEIGHT", 1.0),
+		SynergyBonus:     getEnvFloat("MG_HYBRID_SYNERGY", 0.25),
+		MinPureVectorSim: getEnvFloat("MG_MIN_VECTOR_SIMILARITY", 0.55),
 	}
 
 	srv := server.NewServer(almClient, lexDB, cfg)
