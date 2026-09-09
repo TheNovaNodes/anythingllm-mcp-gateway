@@ -51,8 +51,35 @@ type StoreResult struct {
 
 // WorkspacesEnvelope represents /workspaces response.
 type WorkspacesEnvelope struct {
-	Workspaces []struct {
-		Slug string `json:"slug"`
-		Name string `json:"name"`
-	} `json:"workspaces"`
+	Workspaces []Workspace `json:"workspaces"`
 }
+
+// WorkspacesResponse is an alias for WorkspacesEnvelope.
+type WorkspacesResponse = WorkspacesEnvelope
+
+// Workspace represents an AnythingLLM workspace object.
+type Workspace struct {
+	ID                  int                    `json:"id"`
+	Name                string                 `json:"name"`
+	Slug                string                 `json:"slug"`
+	VectorTag           *string                `json:"vectorTag,omitempty"`
+	CreatedAt           string                 `json:"createdAt,omitempty"`
+	OpenAITemp          *float64               `json:"openAiTemp,omitempty"`
+	OpenAIHistory       *int                   `json:"openAiHistory,omitempty"`
+	LastUpdatedAt       string                 `json:"lastUpdatedAt,omitempty"`
+	OpenAIPrompt        string                 `json:"openAiPrompt,omitempty"`
+	SimilarityThreshold float64                `json:"similarityThreshold,omitempty"`
+	TopN                int                    `json:"topN,omitempty"`
+	ChatMode            string                 `json:"chatMode,omitempty"`
+	VectorCount         int                    `json:"vectorCount,omitempty"`
+	VectorsCount        int                    `json:"vectorsCount,omitempty"`
+	Additional          map[string]interface{} `json:"-"`
+}
+
+// WorkspaceResponse represents the response envelope for a single workspace.
+type WorkspaceResponse struct {
+	Workspace Workspace `json:"workspace"`
+	Message   string    `json:"message,omitempty"`
+	Error     string    `json:"error,omitempty"`
+}
+

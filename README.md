@@ -21,36 +21,29 @@ High-performance Go-based Model Context Protocol (MCP) server for AnythingLLM se
 
 ## 🛠️ Exposed MCP Tools
 
-The gateway exposes 4 high-level semantic memory tools:
+The gateway exposes 3 high-level semantic memory tools:
 
 - **`search_memory`**  
-  Hybrid search querying AnythingLLM vector indices and local FTS5 lexical storage, fusing results with Reciprocal Rank Fusion (RRF), exact match boosting, and context assembly.  
+  FTS5-First hybrid search querying AnythingLLM vector indices and local FTS5 lexical storage, fusing results with Reciprocal Rank Fusion (RRF), exact match boosting, and context assembly. Features candidate workspace pruning to prevent thundering herd timeouts across large multi-project clusters.  
   *Arguments:*  
   — `query` (string, required): The search text or question.  
   — `top_k` (int, optional): Maximum number of passages to return (default: 5, max: 25).  
-  — `workspace` (string, optional): Target AnythingLLM workspace slug (defaults to configured workspace).  
+  — `workspace` (string, optional): Target AnythingLLM workspace slug (defaults to automatic FTS5-First candidate routing).  
   — `expand_context` (bool, optional): Expand matching passages to full surrounding paragraphs.  
   — `max_token_budget` (int, optional): Token budget limit; results are trimmed on sentence boundaries.  
   — `tier` (string, optional): Memory tier filter (`episodic`, `semantic`, `procedural`).
 
-- **`store_memory`**  
-  Active write tool for uploading raw text, decision logs, and documentation into AnythingLLM vector memory. Automatically updates workspace embeddings.  
-  *Arguments:*  
-  — `content` (string, required): Raw text or markdown content to store.  
-  — `title` (string, required): Human-readable title or identifier for the document.  
-  — `workspace` (string, optional): Target workspace slug.  
-  — `metadata` (object, optional): Key-value metadata attached to the record.  
-  — `tier` (string, optional): Memory tier label (`episodic`, `semantic`, `procedural`).
-
 - **`get_document`**  
-  Retrieves full raw document text from the local lexical index by document ID.  
+  Retrieves full raw document text directly from the local lexical SQLite index by document ID (<1ms latency, zero HTTP overhead).  
   *Arguments:*  
-  — `doc_id` (string, required): Unique document identifier.  
-  — `max_chars` (int, optional): Truncation limit in characters (default: 10000).
+  — `doc_id` (string, required): Unique document identifier or file path.  
+  — `workspace` (string, optional): Target workspace slug filter.  
+  — `max_chars` (int, optional): Truncation limit in characters (default: 20000).
 
 - **`gateway_health`**  
   Diagnostics probe that verifies AnythingLLM REST API reachability, checks vector layer latency, tests lexical database integrity, and reports operational status.  
   *Arguments:* None.
+
 
 ---
 
@@ -78,16 +71,20 @@ git clone https://github.com/TheNovaNodes/anythingllm-mcp-gateway.git
 cd anythingllm-mcp-gateway
 make build
 ```
-The compiled binary will be placed at `./bin/anythingllm-gateway`.
+The compiled binaries will be placed in `./bin/`:
+- `bin/anythingllm-gateway` — MCP stdio search server
+- `bin/anythingllm-sync` — Autonomous background ETL sync daemon
 
 ### Install System-wide
 ```bash
 sudo cp bin/anythingllm-gateway /usr/local/bin/
+sudo cp bin/anythingllm-sync /usr/local/bin/
 ```
 
 ### Health Check (stdio smoke test)
 ```bash
 anythingllm-gateway < /dev/null
+anythingllm-sync -once
 ```
 
 ---
