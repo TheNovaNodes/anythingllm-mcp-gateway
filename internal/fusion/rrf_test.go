@@ -274,3 +274,61 @@ func TestRRFMerge_PureVectorSimilarityCutoff(t *testing.T) {
 	}
 }
 
+func TestRRFMergeWithOptions_WeightsAndSynergy(t *testing.T) {
+	vHits := []alm.VectorHit{
+		{DocID: "vec1.txt", Title: "Vec 1", Workspace: "ws1", Text: "text", VectorScore: 0.8},
+	}
+	lHits := []lexical.LexicalHit{
+		{DocID: "lex1.txt", Title: "Lex 1", Workspace: "ws1", Text: "text", LexicalScore: 2.0},
+	}
+
+	// 1. Heavy vector weight should put vec1 ahead of lex1
+	optsVec := RRFOptions{
+		TopK:             5,
+		RRFK:             60,
+		VectorWeight:     3.0,
+		LexicalWeight:    1.0,
+		MinPureVectorSim: 0.5,
+	}
+	resVec := RRFMergeWithOptions(vHits, lHits, optsVec)
+	if len(resVec) != 2 || resVec[0].DocID != "vec1.txt" {
+		t.Errorf("expected vec1.txt first with 3.0 vector weight, got %+v", resVec)
+	}
+
+	// 2. Heavy lexical weight should put lex1 ahead of vec1
+	optsLex := RRFOptions{
+		TopK:             5,
+		RRFK:             60,
+		VectorWeight:     1.0,
+		LexicalWeight:    3.0,
+		MinPureVectorSim: 0.5,
+	}
+	resLex := RRFMergeWithOptions(vHits, lHits, optsLex)
+	if len(resLex) != 2 || resLex[0].DocID != "lex1.txt" {
+		t.Errorf("expected lex1.txt first with 3.0 lexical weight, got %+v", resLex)
+	}
+
+	// 3. Synergy bonus: item with both modalities gets amplified
+	vHitsMulti := []alm.VectorHit{
+		{DocID: "single_vec.txt", Title: "Single Vec", Workspace: "ws1", Text: "text", VectorScore: 0.8},
+		{DocID: "both.txt", Title: "Both", Workspace: "ws1", Text: "text", VectorScore: 0.79},
+	}
+	lHitsMulti := []lexical.LexicalHit{
+		{DocID: "both.txt", Title: "Both", Workspace: "ws1", Text: "text", LexicalScore: 1.0},
+	}
+
+	optsSynergy := RRFOptions{
+		TopK:             5,
+		RRFK:             60,
+		VectorWeight:     1.0,
+		LexicalWeight:    1.0,
+		SynergyBonus:     0.5, // +50% synergy bonus
+		MinPureVectorSim: 0.5,
+	}
+	resSynergy := RRFMergeWithOptions(vHitsMulti, lHitsMulti, optsSynergy)
+	if len(resSynergy) != 2 || resSynergy[0].DocID != "both.txt" {
+		t.Errorf("expected both.txt first due to synergy bonus, got %+v", resSynergy)
+	}
+}
+
+

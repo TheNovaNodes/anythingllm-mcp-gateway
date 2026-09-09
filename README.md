@@ -31,7 +31,11 @@ The gateway exposes 3 high-level semantic memory tools:
   — `workspace` (string, optional): Target AnythingLLM workspace slug (defaults to automatic FTS5-First candidate routing).  
   — `expand_context` (bool, optional): Expand matching passages to full surrounding paragraphs.  
   — `max_token_budget` (int, optional): Token budget limit; results are trimmed on sentence boundaries.  
-  — `tier` (string, optional): Memory tier filter (`episodic`, `semantic`, `procedural`).
+  — `tier` (string, optional): Memory tier filter (`episodic`, `semantic`, `procedural`).  
+  — `vector_weight` (float, optional): Weight multiplier for vector retrieval layer in RRF (default: 1.0).  
+  — `lexical_weight` (float, optional): Weight multiplier for lexical FTS5 layer in RRF (default: 1.0).  
+  — `min_vector_similarity` (float, optional): Cosine similarity cutoff for pure-vector hits (default: 0.55).  
+  — `max_context_chars` (int, optional): Maximum characters for paragraph context expansion (default: 4000).
 
 - **`get_document`**  
   Retrieves full raw document text directly from the local lexical SQLite index by document ID (<1ms latency, zero HTTP overhead).  
@@ -50,12 +54,15 @@ The gateway exposes 3 high-level semantic memory tools:
 ## ⚡ Key Features
 
 - **Multi-Tenant Organization Isolation:** Filters candidates by allowed organizational scope (`MG_ALLOWED_ORGS`) before RRF fusion, preventing data leakage across distinct projects.
+- **FTS5 Morphological Stemming & Wildcards:** Intelligent query expansion generating exact tokens, prefix wildcards (`word*`), and morphological stems for Russian inflections and English plurals/tenses, dramatically boosting lexical recall.
+- **Hybrid Synergy Multiplier:** Automatically amplifies the rank score (+25% bonus) of documents corroborated by both vector semantic and lexical FTS5 layers.
+- **Smart Workspace Candidate Routing:** Pre-filters candidate workspaces dynamically using lexical matches and query-token slug heuristics to prevent thundering herd timeouts across dozens of workspaces.
 - **BM25 Compound Tokenizer:** Advanced FTS5 query parser that splits `camelCase`, `PascalCase`, `kebab-case`, `snake_case`, and hyphenated terms (`ChaCha20Poly1305`, `agent-vault`) into exact sub-tokens.
 - **SQLite FTS5 Column Weighting:** Applies custom BM25 column weights (`title=10.0`, `path=5.0`, `content=1.0`) to give document titles priority over long body text.
 - **Vector Drift Sanitization:** Filters out orthogonal vector noise (distance $\ge 0.85$ or score 1.0 distance inversion anomalies) before rank fusion.
 - **Exact RRF Boost:** Adds score-based rank bonuses (+0.02 to +0.03) for high-confidence BM25 hits and exact title/path substring matches.
 - **Adaptive Token Budgeting:** Trims retrieved passages on natural sentence and paragraph boundaries when `max_token_budget` is set.
-- **Context Assembly:** Expands snippet hits to full surrounding paragraph context for coherent agent reasoning.
+- **Context Assembly & 48-Token Snippets:** Returns rich 48-token context snippets with highlight markers and expands snippet hits to full surrounding paragraph context for coherent agent reasoning.
 - **Ultra-Low Overhead:** Written in pure Go (Go 1.25) with zero CGO dependencies (`modernc.org/sqlite`). Consumes ~13 MB RAM in production.
 
 ---
