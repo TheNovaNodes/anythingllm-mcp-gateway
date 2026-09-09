@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Complete rewrite of the Data Plane Semantic Gateway from Python/FastMCP to Go 1.25 using `mark3labs/mcp-go`.
-- MCP tools: `search_memory`, `store_memory`, `get_document`, `gateway_health`.
+- MCP tools: `search_memory`, `get_document`, `gateway_health`.
 - Hybrid search fusion engine combining AnythingLLM vector search with local SQLite FTS5 BM25 lexical ranking.
 - Reciprocal Rank Fusion (RRF) with temporal decay penalties for stale documentation.
 - Adaptive token budgeting with boundary-aware sentence/paragraph trimming.
