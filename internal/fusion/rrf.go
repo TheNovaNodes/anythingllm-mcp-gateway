@@ -49,6 +49,29 @@ func DedupKey(workspace, docID, title string) string {
 // DefaultMinPureVectorSimilarity defines minimum cosine similarity required for pure-vector hits (issue #45).
 const DefaultMinPureVectorSimilarity = 0.55
 
+// RRFOptions defines tunable weights and thresholds for hybrid search fusion.
+type RRFOptions struct {
+	TopK             int     `json:"top_k"`
+	RRFK             int     `json:"rrf_k"`
+	MinPureVectorSim float64 `json:"min_pure_vector_sim"`
+	VectorWeight     float64 `json:"vector_weight"` // default: 1.0
+	LexicalWeight    float64 `json:"lexical_weight"` // default: 1.0
+	SynergyBonus     float64 `json:"synergy_bonus"`  // multiplier boost for hybrid hits (default: 0.25)
+	Query            string  `json:"query"`
+}
+
+// DefaultRRFOptions returns production-calibrated RRF options.
+func DefaultRRFOptions() RRFOptions {
+	return RRFOptions{
+		TopK:             5,
+		RRFK:             60,
+		MinPureVectorSim: DefaultMinPureVectorSimilarity,
+		VectorWeight:     1.0,
+		LexicalWeight:    1.0,
+		SynergyBonus:     0.25,
+	}
+}
+
 // RRFMerge combines vector hits and lexical hits using Reciprocal Rank Fusion.
 // If query is provided, performs workspace-prioritization boost for matching repositories.
 func RRFMerge(vectorHits []alm.VectorHit, lexicalHits []lexical.LexicalHit, topK, rrfK int, query ...string) []SearchResultItem {
@@ -57,11 +80,43 @@ func RRFMerge(vectorHits []alm.VectorHit, lexicalHits []lexical.LexicalHit, topK
 
 // RRFMergeWithCutoff combines vector hits and lexical hits with an explicit pure-vector similarity cutoff.
 func RRFMergeWithCutoff(vectorHits []alm.VectorHit, lexicalHits []lexical.LexicalHit, topK, rrfK int, minPureVectorSim float64, query ...string) []SearchResultItem {
+	q := ""
+	if len(query) > 0 {
+		q = query[0]
+	}
+	opts := RRFOptions{
+		TopK:             topK,
+		RRFK:             rrfK,
+		MinPureVectorSim: minPureVectorSim,
+		VectorWeight:     1.0,
+		LexicalWeight:    1.0,
+		SynergyBonus:     0.25,
+		Query:            q,
+	}
+	return RRFMergeWithOptions(vectorHits, lexicalHits, opts)
+}
+
+// RRFMergeWithOptions combines vector hits and lexical hits with full control over weights, synergy bonus, and thresholds.
+func RRFMergeWithOptions(vectorHits []alm.VectorHit, lexicalHits []lexical.LexicalHit, opts RRFOptions) []SearchResultItem {
+	rrfK := opts.RRFK
 	if rrfK <= 0 {
 		rrfK = 60
 	}
+	topK := opts.TopK
 	if topK <= 0 {
 		topK = 5
+	}
+	vecW := opts.VectorWeight
+	if vecW <= 0 {
+		vecW = 1.0
+	}
+	lexW := opts.LexicalWeight
+	if lexW <= 0 {
+		lexW = 1.0
+	}
+	synergy := opts.SynergyBonus
+	if synergy < 0 {
+		synergy = 0.0
 	}
 
 	type candidate struct {
@@ -76,7 +131,7 @@ func RRFMergeWithCutoff(vectorHits []alm.VectorHit, lexicalHits []lexical.Lexica
 	// 1. Process Vector Hits
 	for rank, vHit := range vectorHits {
 		key := DedupKey(vHit.Workspace, vHit.DocID, vHit.Title)
-		rrfContrib := 1.0 / float64(rrfK+rank+1)
+		rrfContrib := vecW / float64(rrfK+rank+1)
 
 		if c, exists := merged[key]; exists {
 			c.rrfRank += rrfContrib
@@ -110,7 +165,7 @@ func RRFMergeWithCutoff(vectorHits []alm.VectorHit, lexicalHits []lexical.Lexica
 	// 2. Process Lexical Hits
 	for rank, lHit := range lexicalHits {
 		key := DedupKey(lHit.Workspace, lHit.DocID, lHit.Title)
-		rrfContrib := 1.0 / float64(rrfK+rank+1)
+		rrfContrib := lexW / float64(rrfK+rank+1)
 
 		if c, exists := merged[key]; exists {
 			c.rrfRank += rrfContrib
@@ -139,8 +194,9 @@ func RRFMergeWithCutoff(vectorHits []alm.VectorHit, lexicalHits []lexical.Lexica
 
 	// Prepare query tokens for workspace prioritization boost
 	var queryTokens []string
-	if len(query) > 0 && strings.TrimSpace(query[0]) != "" {
-		words := strings.FieldsFunc(strings.ToLower(query[0]), func(r rune) bool {
+	cleanQuery := strings.TrimSpace(opts.Query)
+	if cleanQuery != "" {
+		words := strings.FieldsFunc(strings.ToLower(cleanQuery), func(r rune) bool {
 			return !unicode.IsLetter(r) && !unicode.IsNumber(r)
 		})
 		for _, w := range words {
@@ -150,17 +206,19 @@ func RRFMergeWithCutoff(vectorHits []alm.VectorHit, lexicalHits []lexical.Lexica
 		}
 	}
 
-	// 3. Assemble and calculate final scores with workspace boost and exact match bonus
-	rawQuery := ""
-	if len(query) > 0 {
-		rawQuery = strings.ToLower(strings.TrimSpace(query[0]))
-	}
+	// 3. Assemble and calculate final scores with synergy, workspace boost and exact match bonus
+	rawQuery := strings.ToLower(cleanQuery)
 
 	results := make([]SearchResultItem, 0, len(merged))
 	for _, c := range merged {
 		// Pure vector threshold cutoff (#45): discard pure-vector candidates below similarity threshold
-		if c.hasVec && !c.hasLex && minPureVectorSim > 0 && c.item.VectorScore < minPureVectorSim {
+		if c.hasVec && !c.hasLex && opts.MinPureVectorSim > 0 && c.item.VectorScore < opts.MinPureVectorSim {
 			continue
+		}
+
+		// Synergy multiplier: reward items corroborated by both vector & lexical modalities
+		if c.hasVec && c.hasLex && synergy > 0 {
+			c.rrfRank *= (1.0 + synergy)
 		}
 
 		boost := 1.0

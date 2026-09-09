@@ -84,8 +84,75 @@ func (d *DB) Close() error {
 
 var compoundRegex = regexp.MustCompile(`[\p{L}\p{N}_\-\./]+`)
 
+// extractStem derives a normalized word stem for Russian and English words (length >= 5 runes).
+func extractStem(word string) string {
+	runes := []rune(strings.ToLower(word))
+	n := len(runes)
+	if n < 5 {
+		return ""
+	}
+
+	// Check if Cyrillic
+	isCyrillic := true
+	for _, r := range runes {
+		if !unicode.Is(unicode.Cyrillic, r) {
+			isCyrillic = false
+			break
+		}
+	}
+
+	if isCyrillic {
+		// Russian inflection suffixes ordered by decreasing length
+		suffixes := []string{
+			"овать", "евать", "ивать", "ывать", "вшись", "ующий", "ющий", "ающий", "нного",
+			"ому", "ему", "ого", "его", "ыми", "ими", "ами", "ями", "ции", "ция", "цию",
+			"ей", "ой", "ем", "ом", "ам", "ям", "ах", "ях", "ов", "ев", "ия", "ии", "ию",
+			"ью", "ья", "ье", "ая", "ое", "ее", "ые", "ие", "ий", "ый", "ать", "ять", "еть", "ить",
+			"а", "я", "у", "ю", "о", "е", "ы", "и", "ь",
+		}
+		sStr := string(runes)
+		for _, sfx := range suffixes {
+			if strings.HasSuffix(sStr, sfx) {
+				stem := strings.TrimSuffix(sStr, sfx)
+				if utf8.RuneCountInString(stem) >= 3 {
+					return stem
+				}
+			}
+		}
+		return ""
+	}
+
+	// Check if Latin
+	isLatin := true
+	for _, r := range runes {
+		if !unicode.Is(unicode.Latin, r) {
+			isLatin = false
+			break
+		}
+	}
+
+	if isLatin {
+		suffixes := []string{
+			"ments", "ment", "tions", "tion", "ings", "ing", "able", "ible", "ness",
+			"ive", "ies", "es", "ed", "s",
+		}
+		sStr := string(runes)
+		for _, sfx := range suffixes {
+			if strings.HasSuffix(sStr, sfx) {
+				stem := strings.TrimSuffix(sStr, sfx)
+				if utf8.RuneCountInString(stem) >= 3 {
+					return stem
+				}
+			}
+		}
+	}
+
+	return ""
+}
+
 // BuildSafeFTSQuery converts arbitrary user search query into safe FTS5 MATCH expression.
-// It splits compound words on hyphens, underscores, dots, and camelCase boundaries.
+// It splits compound words on hyphens, underscores, dots, and camelCase boundaries,
+// generating exact phrases, prefix wildcard tokens, and morphological stem wildcards.
 func BuildSafeFTSQuery(query string) string {
 	rawTokens := compoundRegex.FindAllString(query, -1)
 	if len(rawTokens) == 0 {
@@ -93,14 +160,37 @@ func BuildSafeFTSQuery(query string) string {
 	}
 
 	seen := make(map[string]bool)
-	tokens := make([]string, 0, len(rawTokens)*2)
+	tokens := make([]string, 0, len(rawTokens)*3)
 
 	addToken := func(t string) {
 		tClean := strings.TrimSpace(strings.ReplaceAll(t, "\"", ""))
 		tClean = strings.Trim(tClean, "-_./")
-		if utf8.RuneCountInString(tClean) >= 2 && !seen[strings.ToLower(tClean)] {
-			seen[strings.ToLower(tClean)] = true
+		runeLen := utf8.RuneCountInString(tClean)
+		if runeLen < 2 {
+			return
+		}
+		lower := strings.ToLower(tClean)
+		if !seen[lower] {
+			seen[lower] = true
 			tokens = append(tokens, fmt.Sprintf("\"%s\"", tClean))
+		}
+
+		// Prefix wildcard for words with length >= 4 runes
+		if runeLen >= 4 {
+			pfx := lower + "*"
+			if !seen[pfx] {
+				seen[pfx] = true
+				tokens = append(tokens, fmt.Sprintf("\"%s\"*", tClean))
+			}
+		}
+
+		// Morphological stem wildcard for words with length >= 5 runes
+		if stem := extractStem(tClean); stem != "" {
+			stemPfx := stem + "*"
+			if !seen[stemPfx] {
+				seen[stemPfx] = true
+				tokens = append(tokens, fmt.Sprintf("\"%s\"*", stem))
+			}
 		}
 	}
 
@@ -188,7 +278,7 @@ func (d *DB) Search(ctx context.Context, query, workspace string, topK int) ([]L
 
 	if cleanWS != "" && d.hasWorkspaceCol {
 		querySQL := `
-			SELECT path, title, workspace, bm25(docs_fts, 5.0, 10.0, 0.0, 1.0) AS rank, snippet(docs_fts, -1, '⟨b⟩', '⟨/b⟩', '…', 12)
+			SELECT path, title, workspace, bm25(docs_fts, 5.0, 10.0, 0.0, 1.0) AS rank, snippet(docs_fts, -1, '⟨b⟩', '⟨/b⟩', '…', 48)
 			FROM docs_fts
 			WHERE docs_fts MATCH ? AND lower(workspace) = ?
 			ORDER BY rank
@@ -197,7 +287,7 @@ func (d *DB) Search(ctx context.Context, query, workspace string, topK int) ([]L
 		rows, err = d.db.QueryContext(ctx, querySQL, matchExpr, cleanWS, topK)
 	} else if d.hasWorkspaceCol {
 		querySQL := `
-			SELECT path, title, workspace, bm25(docs_fts, 5.0, 10.0, 0.0, 1.0) AS rank, snippet(docs_fts, -1, '⟨b⟩', '⟨/b⟩', '…', 12)
+			SELECT path, title, workspace, bm25(docs_fts, 5.0, 10.0, 0.0, 1.0) AS rank, snippet(docs_fts, -1, '⟨b⟩', '⟨/b⟩', '…', 48)
 			FROM docs_fts
 			WHERE docs_fts MATCH ?
 			ORDER BY rank
@@ -206,7 +296,7 @@ func (d *DB) Search(ctx context.Context, query, workspace string, topK int) ([]L
 		rows, err = d.db.QueryContext(ctx, querySQL, matchExpr, topK)
 	} else {
 		querySQL := `
-			SELECT path, title, '' AS workspace, bm25(docs_fts, 5.0, 10.0, 1.0) AS rank, snippet(docs_fts, -1, '⟨b⟩', '⟨/b⟩', '…', 12)
+			SELECT path, title, '' AS workspace, bm25(docs_fts, 5.0, 10.0, 1.0) AS rank, snippet(docs_fts, -1, '⟨b⟩', '⟨/b⟩', '…', 48)
 			FROM docs_fts
 			WHERE docs_fts MATCH ?
 			ORDER BY rank
