@@ -122,19 +122,7 @@ func (s *Server) registerTools() {
 		s.handleSearchMemory,
 	)
 
-	// 2. store_memory
-	s.mcpServer.AddTool(
-		mcp.NewTool("store_memory",
-			mcp.WithDescription("Store new facts, notes, and architectural decisions into semantic memory."),
-			mcp.WithString("content", mcp.Required(), mcp.Description("Text content of the fact or note to store")),
-			mcp.WithString("title", mcp.Description("Title/filename for the memory (e.g. 'auth_architecture.md')")),
-			mcp.WithString("workspace", mcp.Description("Target workspace slug (default: configured default workspace)")),
-			mcp.WithString("tier", mcp.Description("Memory hierarchy tier ('episodic', 'semantic', 'procedural')")),
-		),
-		s.handleStoreMemory,
-	)
-
-	// 3. get_document
+	// 2. get_document
 	s.mcpServer.AddTool(
 		mcp.NewTool("get_document",
 			mcp.WithDescription("Fetch the full raw text content of a document by doc_id or path."),
@@ -145,7 +133,7 @@ func (s *Server) registerTools() {
 		s.handleGetDocument,
 	)
 
-	// 4. gateway_health
+	// 3. gateway_health
 	s.mcpServer.AddTool(
 		mcp.NewTool("gateway_health",
 			mcp.WithDescription("Check health and operational state of vector and lexical retrieval layers."),
@@ -184,26 +172,55 @@ func (s *Server) handleSearchMemory(ctx context.Context, req mcp.CallToolRequest
 	var lexicalHits []lexical.LexicalHit
 	var vecErr, lexErr error
 
-	var g errgroup.Group
-
-	// 1. Vector Search Layer
-	g.Go(func() error {
-		var slugs []string
-		if workspace != "" {
-			slugs = []string{workspace}
+	// 1. Lexical Search Layer (Runs first to discover candidate workspaces - FTS5-First Routing)
+	if s.lexDB != nil && s.lexDB.IsAvailable() {
+		hits, err := s.lexDB.Search(searchCtx, cleanQuery, workspace, topK*3)
+		if err != nil {
+			lexErr = err
 		} else {
-			discovered, err := s.almClient.GetWorkspaceSlugs(searchCtx)
-			if err != nil {
-				vecErr = err
-				return nil
+			lexicalHits = hits
+		}
+	}
+
+	// 2. Vector Search Layer with FTS5-First workspace candidate pruning
+	var slugs []string
+	if workspace != "" {
+		slugs = []string{workspace}
+	} else if len(lexicalHits) > 0 {
+		// FTS5-First: Extract distinct workspaces from top lexical matches
+		seenWS := make(map[string]bool)
+		for _, h := range lexicalHits {
+			wsClean := strings.TrimSpace(h.Workspace)
+			if wsClean != "" && !seenWS[wsClean] {
+				seenWS[wsClean] = true
+				slugs = append(slugs, wsClean)
+				if len(slugs) >= 5 { // cap at top 5 most relevant workspaces
+					break
+				}
 			}
-			slugs = discovered
 		}
-
-		if len(slugs) == 0 {
-			return nil
+		// Also include default workspace if configured and not already included
+		if defWS := s.almClient.DefaultWorkspace(); defWS != "" && !seenWS[defWS] && defWS != "default" {
+			slugs = append(slugs, defWS)
 		}
+	}
 
+	// Fallback if no lexical candidate workspaces were found: discover workspaces from API (capped to prevent thundering herd)
+	if len(slugs) == 0 {
+		discovered, err := s.almClient.GetWorkspaceSlugs(searchCtx)
+		if err != nil {
+			vecErr = err
+		} else if len(discovered) > 0 {
+			if len(discovered) > 8 {
+				slugs = discovered[:8] // bounded fallback
+			} else {
+				slugs = discovered
+			}
+		}
+	}
+
+	// 3. Parallel Vector Search across candidate workspaces
+	if len(slugs) > 0 {
 		var hitMu sync.Mutex
 		var vecGroup errgroup.Group
 
@@ -226,23 +243,7 @@ func (s *Server) handleSearchMemory(ctx context.Context, req mcp.CallToolRequest
 		sort.Slice(vectorHits, func(i, j int) bool {
 			return vectorHits[i].VectorScore > vectorHits[j].VectorScore
 		})
-		return nil
-	})
-
-	// 2. Lexical Search Layer
-	g.Go(func() error {
-		if s.lexDB != nil && s.lexDB.IsAvailable() {
-			hits, err := s.lexDB.Search(searchCtx, cleanQuery, workspace, topK*2)
-			if err != nil {
-				lexErr = err
-			} else {
-				lexicalHits = hits
-			}
-		}
-		return nil
-	})
-
-	_ = g.Wait()
+	}
 
 	// 3. Multi-tenant Org Scoping Filter
 	if len(s.allowedOrgs) > 0 {
