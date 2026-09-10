@@ -406,3 +406,33 @@ func TestClient_SearchWorkspaceVectors_Errors(t *testing.T) {
         t.Errorf("expected semaphore timeout error, got %v", err)
     }
 }
+
+func TestClient_SearchWorkspaceVectors_ContextCancel(t *testing.T) {
+	c := NewClient(ClientConfig{BaseURL: "http://localhost", MaxInflight: 1})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel before even calling
+
+	_, err := c.SearchWorkspaceVectors(ctx, "ws1", "query", 5, 0.1)
+	if err == nil || !strings.Contains(err.Error(), "vector search concurrency queue timeout") {
+		t.Errorf("expected semaphore timeout error from pre-cancelled context, got %v", err)
+	}
+}
+
+func TestClient_SearchWorkspaceVectors_InflightCancel(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-time.After(200 * time.Millisecond):
+		}
+	}))
+	defer ts.Close()
+
+	c := NewClient(ClientConfig{BaseURL: ts.URL, MaxInflight: 1})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+
+	_, err := c.SearchWorkspaceVectors(ctx, "ws1", "query", 5, 0.1)
+	if err == nil || !strings.Contains(err.Error(), "context deadline exceeded") {
+		t.Errorf("expected context deadline exceeded error, got %v", err)
+	}
+}
