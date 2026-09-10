@@ -337,12 +337,17 @@ func (s *Server) handleSearchMemory(ctx context.Context, req mcp.CallToolRequest
 	if len(slugs) > 0 {
 		var hitMu sync.Mutex
 		var vecGroup errgroup.Group
+		var errCount int
+		var errMu sync.Mutex
 
 		for _, slug := range slugs {
 			sSlug := slug
 			vecGroup.Go(func() error {
 				hits, err := s.almClient.SearchWorkspaceVectors(searchCtx, sSlug, cleanQuery, topK*2, s.vectorScoreThr)
 				if err != nil {
+					errMu.Lock()
+					errCount++
+					errMu.Unlock()
 					return nil // individual workspace error does not abort group
 				}
 				hitMu.Lock()
@@ -352,6 +357,10 @@ func (s *Server) handleSearchMemory(ctx context.Context, req mcp.CallToolRequest
 			})
 		}
 		_ = vecGroup.Wait()
+
+		if errCount == len(slugs) && vecErr == nil {
+			vecErr = fmt.Errorf("all %d candidate workspaces failed vector search", len(slugs))
+		}
 
 		// Sort vectorHits descending by VectorScore before RRF rank assignment
 		sort.Slice(vectorHits, func(i, j int) bool {
@@ -485,18 +494,39 @@ func (s *Server) handleGatewayHealth(ctx context.Context, req mcp.CallToolReques
 	defer cancel()
 
 	vectorReachable := false
+	vectorFunctional := false
 	workspaces, err := s.almClient.GetWorkspaceSlugs(healthCtx)
 	if err == nil {
 		vectorReachable = true
+		if len(workspaces) > 0 {
+			probeWS := workspaces[0]
+			if defWS := s.almClient.DefaultWorkspace(); defWS != "" {
+				for _, ws := range workspaces {
+					if ws == defWS {
+						probeWS = defWS
+						break
+					}
+				}
+			}
+			probeCtx, probeCancel := context.WithTimeout(healthCtx, 1500*time.Millisecond)
+			defer probeCancel()
+			_, searchErr := s.almClient.SearchWorkspaceVectors(probeCtx, probeWS, "healthcheck probe", 1, 0.0)
+			if searchErr == nil {
+				vectorFunctional = true
+			}
+		} else {
+			vectorFunctional = true
+		}
 	}
 
 	lexicalReachable := s.lexDB != nil && s.lexDB.IsAvailable()
 
 	health := map[string]interface{}{
-		"ok":       vectorReachable,
-		"degraded": !vectorReachable || !lexicalReachable,
+		"ok":       vectorReachable && vectorFunctional && lexicalReachable,
+		"degraded": !vectorReachable || !vectorFunctional || !lexicalReachable,
 		"vector_layer": map[string]interface{}{
 			"reachable":  vectorReachable,
+			"functional": vectorFunctional,
 			"workspaces": len(workspaces),
 		},
 		"lexical_layer": map[string]interface{}{

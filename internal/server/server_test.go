@@ -207,6 +207,56 @@ func TestServer_GatewayHealth(t *testing.T) {
 	if err != nil || res.IsError {
 		t.Fatalf("handleGatewayHealth failed: %v", err)
 	}
+
+	var health map[string]interface{}
+	text := res.Content[0].(mcp.TextContent).Text
+	if err := json.Unmarshal([]byte(text), &health); err != nil {
+		t.Fatalf("failed to parse health output: %v", err)
+	}
+	if ok, _ := health["ok"].(bool); !ok {
+		t.Errorf("expected ok=true in healthy environment, got %+v", health)
+	}
+	if deg, _ := health["degraded"].(bool); deg {
+		t.Errorf("expected degraded=false in healthy environment, got %+v", health)
+	}
+}
+
+func TestServer_GatewayHealth_VectorDegraded(t *testing.T) {
+	// Server where vector search fails with 500
+	tsDegraded := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/workspaces" {
+			json.NewEncoder(w).Encode(alm.WorkspacesEnvelope{
+				Workspaces: []alm.Workspace{{Slug: "ws-test", Name: "WS Test"}},
+			})
+			return
+		}
+		http.Error(w, "vector index crashed", http.StatusInternalServerError)
+	}))
+	defer tsDegraded.Close()
+
+	almClient := alm.NewClient(alm.ClientConfig{
+		BaseURL:   tsDegraded.URL,
+		APIKey:    "test-key",
+		DefaultWS: "ws-test",
+	})
+	srv := NewServer(almClient, nil, Config{})
+	res, err := srv.handleGatewayHealth(context.Background(), mcp.CallToolRequest{})
+	if err != nil || res.IsError {
+		t.Fatalf("handleGatewayHealth failed: %v", err)
+	}
+
+	var health map[string]interface{}
+	text := res.Content[0].(mcp.TextContent).Text
+	if err := json.Unmarshal([]byte(text), &health); err != nil {
+		t.Fatalf("failed to parse health output: %v", err)
+	}
+	if ok, _ := health["ok"].(bool); ok {
+		t.Errorf("expected ok=false when vector search fails, got %+v", health)
+	}
+	if deg, _ := health["degraded"].(bool); !deg {
+		t.Errorf("expected degraded=true when vector search fails, got %+v", health)
+	}
 }
 
 func TestServer_ToolsPruned(t *testing.T) {
