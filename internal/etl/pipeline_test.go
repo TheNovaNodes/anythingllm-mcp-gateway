@@ -223,3 +223,132 @@ func TestPipeline_SnapshotRepoFilter(t *testing.T) {
 	}
 }
 
+func TestPipeline_Chunking(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "etl_chunk_test_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	projectsDir := filepath.Join(tempDir, "projects")
+	stateDir := filepath.Join(tempDir, "state")
+
+	repoDir := filepath.Join(projectsDir, "org1", "repo1")
+	if err := os.MkdirAll(repoDir, 0755); err != nil {
+		t.Fatalf("failed to create repo dir: %v", err)
+	}
+
+	// Create large document (> 512 tokens)
+	var sb strings.Builder
+	for i := 1; i <= 25; i++ {
+		sb.WriteString(fmt.Sprintf("## Chapter %d\n\n", i))
+		sb.WriteString(strings.Repeat("Кайрос и Хронос определяют дуализм времени в философии. ", 20))
+		sb.WriteString("\n\n")
+	}
+	essayPath := filepath.Join(repoDir, "essay.md")
+	if err := os.WriteFile(essayPath, []byte(sb.String()), 0644); err != nil {
+		t.Fatalf("failed to write essay: %v", err)
+	}
+
+	var mu sync.Mutex
+	uploadedUploads := 0
+	var addsList []string
+	var deletesList []string
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/workspaces":
+			json.NewEncoder(w).Encode(alm.WorkspacesResponse{
+				Workspaces: []alm.Workspace{{Slug: "org1-repo1", Name: "org1-repo1"}},
+			})
+
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/document/raw-text":
+			uploadedUploads++
+			loc := fmt.Sprintf("custom-documents/chunk-%d.json", uploadedUploads)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true,
+				"documents": []map[string]string{
+					{"id": fmt.Sprintf("id-%d", uploadedUploads), "location": loc},
+				},
+			})
+
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/workspace/") && strings.HasSuffix(r.URL.Path, "/update-embeddings"):
+			var req map[string][]string
+			json.NewDecoder(r.Body).Decode(&req)
+			if adds, ok := req["adds"]; ok {
+				addsList = append(addsList, adds...)
+			}
+			if dels, ok := req["deletes"]; ok {
+				deletesList = append(deletesList, dels...)
+			}
+			w.Write([]byte(`{"workspace": {"slug": "org1-repo1"}}`))
+
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	cfg := PipelineConfig{
+		ProjectsDir: projectsDir,
+		StateDir:    stateDir,
+		BaseURL:     ts.URL,
+		APIKey:      "dummy",
+		Timeout:     5 * time.Second,
+	}
+	pipeline := NewPipeline(cfg)
+
+	if err := pipeline.Run(context.Background()); err != nil {
+		t.Fatalf("pipeline.Run failed: %v", err)
+	}
+
+	mu.Lock()
+	if uploadedUploads <= 1 {
+		t.Errorf("expected > 1 uploaded chunks for large doc, got %d", uploadedUploads)
+	}
+	if len(addsList) != uploadedUploads {
+		t.Errorf("expected %d embedded chunks, got %d", uploadedUploads, len(addsList))
+	}
+	mu.Unlock()
+
+	// Verify chunks indexed in lexical.db
+	lexIdx, err := NewLexicalIndexer(stateDir)
+	if err != nil {
+		t.Fatalf("failed to open lexical.db: %v", err)
+	}
+	defer lexIdx.Close()
+	count, err := lexIdx.Count()
+	if err != nil {
+		t.Fatalf("failed to count: %v", err)
+	}
+	if count != uploadedUploads {
+		t.Errorf("expected %d chunks in lexical.db, got %d", uploadedUploads, count)
+	}
+
+	// Delete essay.md to trigger tombstone purge
+	if err := os.Remove(essayPath); err != nil {
+		t.Fatalf("failed to delete essay: %v", err)
+	}
+
+	if err := pipeline.Run(context.Background()); err != nil {
+		t.Fatalf("second pipeline run failed: %v", err)
+	}
+
+	mu.Lock()
+	if len(deletesList) != uploadedUploads {
+		t.Errorf("expected %d purged chunk locations, got %d", uploadedUploads, len(deletesList))
+	}
+	mu.Unlock()
+
+	// Verify chunks deleted from lexical.db
+	countAfter, _ := lexIdx.Count()
+	if countAfter != 0 {
+		t.Errorf("expected 0 chunks in lexical.db after tombstone purge, got %d", countAfter)
+	}
+}
+

@@ -169,6 +169,7 @@ func (s *Server) registerTools() {
 			mcp.WithNumber("lexical_weight", mcp.Description("Weight multiplier for lexical FTS5 layer in RRF (default: 1.0)")),
 			mcp.WithNumber("min_vector_similarity", mcp.Description("Cosine similarity cutoff for pure-vector hits (default: 0.55)")),
 			mcp.WithNumber("max_context_chars", mcp.Description("Maximum characters for paragraph context expansion (default: 4000)")),
+			mcp.WithString("group_by", mcp.Description("Optional grouping strategy ('chunk' or 'document', default: 'chunk')")),
 		),
 		s.handleSearchMemory,
 	)
@@ -231,6 +232,7 @@ func (s *Server) handleSearchMemory(ctx context.Context, req mcp.CallToolRequest
 	if maxContextChars <= 0 {
 		maxContextChars = 4000
 	}
+	groupBy := strings.ToLower(strings.TrimSpace(req.GetString("group_by", "chunk")))
 
 	// Bounded execution timeout: max 6 seconds total
 	searchCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
@@ -383,6 +385,11 @@ func (s *Server) handleSearchMemory(ctx context.Context, req mcp.CallToolRequest
 			}
 		}
 		merged = tierFiltered
+	}
+
+	// 5.5 Document-level Grouping (#39)
+	if groupBy == "document" {
+		merged = fusion.GroupByDocument(merged)
 	}
 
 	// 6. Context Assembly
