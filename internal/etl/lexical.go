@@ -91,10 +91,10 @@ func (idx *LexicalIndexer) Close() error {
 	return nil
 }
 
-// Has checks if a document path is already indexed in docs_fts.
+// Has checks if a document path or its chunks are already indexed in docs_fts.
 func (idx *LexicalIndexer) Has(path string) (bool, error) {
 	var count int
-	err := idx.db.QueryRow("SELECT count(*) FROM docs_fts WHERE path = ? LIMIT 1", path).Scan(&count)
+	err := idx.db.QueryRow("SELECT count(*) FROM docs_fts WHERE path = ? OR path LIKE ? LIMIT 1", path, path+"#%").Scan(&count)
 	if err != nil {
 		return false, err
 	}
@@ -120,9 +120,9 @@ func (idx *LexicalIndexer) Index(path, title, workspace, content string) error {
 	return tx.Commit()
 }
 
-// Delete removes a document from docs_fts.
+// Delete removes a document and any associated chunks from docs_fts.
 func (idx *LexicalIndexer) Delete(path string) error {
-	_, err := idx.db.Exec("DELETE FROM docs_fts WHERE path = ?", path)
+	_, err := idx.db.Exec("DELETE FROM docs_fts WHERE path = ? OR path LIKE ?", path, path+"#%")
 	if err != nil {
 		return fmt.Errorf("failed to delete %s from docs_fts: %w", path, err)
 	}

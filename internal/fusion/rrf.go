@@ -334,3 +334,42 @@ func IsOrgAllowed(org string, allowedOrgs []string) bool {
 	}
 	return false
 }
+
+// GroupByDocument collapses chunks from the same parent document into a single result item, taking the max score.
+func GroupByDocument(items []SearchResultItem) []SearchResultItem {
+	if len(items) == 0 {
+		return items
+	}
+
+	seen := make(map[string]int) // composite key -> index in grouped
+	var grouped []SearchResultItem
+
+	for _, item := range items {
+		parentID := item.DocID
+		if idx := strings.Index(parentID, "#chunk-"); idx != -1 {
+			parentID = parentID[:idx]
+		}
+
+		key := strings.ToLower(item.Workspace) + ":" + strings.ToLower(parentID)
+
+		if existingIdx, exists := seen[key]; exists {
+			if item.Score > grouped[existingIdx].Score {
+				grouped[existingIdx].Score = item.Score
+				grouped[existingIdx].VectorScore = item.VectorScore
+				grouped[existingIdx].LexicalScore = item.LexicalScore
+				grouped[existingIdx].Text = item.Text
+				grouped[existingIdx].Source = item.Source
+			}
+		} else {
+			clone := item
+			clone.DocID = parentID
+			if partIdx := strings.Index(clone.Title, " (Part "); partIdx != -1 {
+				clone.Title = clone.Title[:partIdx]
+			}
+			seen[key] = len(grouped)
+			grouped = append(grouped, clone)
+		}
+	}
+
+	return grouped
+}

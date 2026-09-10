@@ -159,26 +159,36 @@ func (p *Pipeline) Run(ctx context.Context) error {
 				}
 				contentStr := string(contentBytes)
 				title := filepath.Base(path)
+				chunks := ChunkDocument(path, title, contentStr, DefaultMaxChunkTokens, DefaultChunkOverlapTokens)
 
 				// 1. Maintain SQLite FTS5 lexical index
 				if !hasLex || needsProc {
-					if err := indexer.Index(path, title, wsSlug, contentStr); err != nil {
-						log.Printf("ERROR: Failed to index %s into lexical.db: %v", path, err)
-					} else if !needsProc {
+					_ = indexer.Delete(path)
+					for _, ch := range chunks {
+						docID := ch.ChunkID
+						if len(chunks) == 1 {
+							docID = path
+						}
+						if err := indexer.Index(docID, ch.Title, wsSlug, ch.Content); err != nil {
+							log.Printf("ERROR: Failed to index %s into lexical.db: %v", docID, err)
+						}
+					}
+					if !needsProc {
 						lexicalBackfilledCount++
 					}
 				}
 
 				// 2. Vector indexing via AnythingLLM API
 				if needsProc {
-					log.Printf("Syncing %s -> Workspace: %s", path, wsSlug)
-					location, err := p.uploadDocument(ctx, wsSlug, path, contentStr)
+					log.Printf("Syncing %s (%d chunks) -> Workspace: %s", path, len(chunks), wsSlug)
+					locations, err := p.uploadChunks(ctx, wsSlug, chunks)
 					if err != nil {
 						log.Printf("ERROR: Failed to upload %s: %v", path, err)
 						continue
 					}
 
-					if err := deduper.MarkProcessed(path, mtime, currentHash, location, wsSlug); err != nil {
+					combinedLocs := strings.Join(locations, ",")
+					if err := deduper.MarkProcessed(path, mtime, currentHash, combinedLocs, wsSlug); err != nil {
 						log.Printf("WARNING: Failed to record %s in ledger: %v", path, err)
 					}
 					syncedCount++
@@ -197,9 +207,18 @@ func (p *Pipeline) Run(ctx context.Context) error {
 				log.Printf("WARNING: Failed to delete %s from lexical index: %v", t.FilePath, err)
 			}
 			if t.DocLocation != "" && t.Workspace != "" {
-				log.Printf("Purging tombstone: %s (Location: %s) from Workspace: %s", t.FilePath, t.DocLocation, t.Workspace)
-				if err := p.almClient.UpdateEmbeddings(ctx, t.Workspace, nil, []string{t.DocLocation}); err != nil {
-					log.Printf("WARNING: Failed to purge embedding for %s: %v", t.FilePath, err)
+				locs := strings.Split(t.DocLocation, ",")
+				var cleanLocs []string
+				for _, l := range locs {
+					if trimmed := strings.TrimSpace(l); trimmed != "" {
+						cleanLocs = append(cleanLocs, trimmed)
+					}
+				}
+				if len(cleanLocs) > 0 {
+					log.Printf("Purging tombstone: %s (%d locations) from Workspace: %s", t.FilePath, len(cleanLocs), t.Workspace)
+					if err := p.almClient.UpdateEmbeddings(ctx, t.Workspace, nil, cleanLocs); err != nil {
+						log.Printf("WARNING: Failed to purge embedding for %s: %v", t.FilePath, err)
+					}
 				}
 			}
 		}
@@ -227,20 +246,56 @@ func (p *Pipeline) ensureWorkspace(ctx context.Context, targetSlug string) (stri
 	return ws.Slug, nil
 }
 
-func (p *Pipeline) uploadDocument(ctx context.Context, slug, filePath, content string) (string, error) {
-	metaHeader := fmt.Sprintf("<document_metadata>\nsource_path: %s\ngenerated_at: %s\n</document_metadata>\n\n", filePath, time.Now().UTC().Format(time.RFC3339))
-	fullText := metaHeader + content
+func (p *Pipeline) uploadChunks(ctx context.Context, slug string, chunks []Chunk) ([]string, error) {
+	var locations []string
+	for _, chunk := range chunks {
+		metaHeader := fmt.Sprintf("<document_metadata>\nsource_path: %s\nchunk_index: %d/%d\ngenerated_at: %s\n</document_metadata>\n\n",
+			chunk.ParentPath, chunk.Index+1, chunk.Total, time.Now().UTC().Format(time.RFC3339))
+		fullText := metaHeader + chunk.Content
 
-	location, err := p.almClient.UploadRawText(ctx, fullText, map[string]interface{}{
-		"title": filepath.Base(filePath),
-	})
+		meta := map[string]interface{}{
+			"title":       chunk.Title,
+			"source_path": chunk.ParentPath,
+			"chunk_index": chunk.Index,
+			"chunk_total": chunk.Total,
+		}
+
+		location, err := p.almClient.UploadRawText(ctx, fullText, meta)
+		if err != nil {
+			return locations, err
+		}
+		locations = append(locations, location)
+	}
+
+	if len(locations) > 0 {
+		if err := p.almClient.UpdateEmbeddings(ctx, slug, locations, nil); err != nil {
+			return locations, err
+		}
+	}
+
+	return locations, nil
+}
+
+func (p *Pipeline) uploadDocument(ctx context.Context, slug, filePath, content string) (string, error) {
+	chunks := []Chunk{
+		{
+			Index:      0,
+			Total:      1,
+			ChunkID:    filePath,
+			ParentPath: filePath,
+			Title:      filepath.Base(filePath),
+			Content:    content,
+		},
+	}
+	locs, err := p.uploadChunks(ctx, slug, chunks)
 	if err != nil {
+		if len(locs) > 0 {
+			return locs[0], err
+		}
 		return "", err
 	}
-
-	if err := p.almClient.UpdateEmbeddings(ctx, slug, []string{location}, nil); err != nil {
-		return location, err
+	if len(locs) == 0 {
+		return "", fmt.Errorf("no location returned")
 	}
-
-	return location, nil
+	return locs[0], nil
 }
