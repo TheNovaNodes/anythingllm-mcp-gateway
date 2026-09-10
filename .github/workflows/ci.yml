@@ -1,27 +1,46 @@
 name: CI Test Suite
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: [ "main" ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
   pull_request:
     branches: [ "main" ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.x'
+          go-version-file: 'go.mod'
+          cache: true
       - name: Verify Dependencies
         run: go mod verify
       - name: Vet
         run: go vet ./...
       - name: Run Tests
         run: go test -v -race -cover ./internal/...
-      - name: Build Binary
-        run: go build -v -ldflags="-s -w" -o bin/anythingllm-gateway .
+      - name: Build Binaries
+        run: |
+          mkdir -p bin
+          go build -v -ldflags="-s -w" -o bin/anythingllm-gateway .
+          go build -v -ldflags="-s -w" -o bin/anythingllm-sync ./cmd/anythingllm-sync
