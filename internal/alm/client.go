@@ -200,9 +200,15 @@ func (c *Client) doExecute(req *http.Request) ([]byte, int, error) {
 	if err != nil {
 		return nil, 0, fmt.Errorf("network error connecting to AnythingLLM at %s: %w", req.URL.String(), err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		// Drain a small amount of the body so connections can be recycled
+		_, _ = io.CopyN(io.Discard, resp.Body, 512)
+		resp.Body.Close()
+	}()
 
-	body, err := io.ReadAll(resp.Body)
+	// Protect against memory exhaustion (max 10MB)
+	lr := io.LimitReader(resp.Body, 10*1024*1024)
+	body, err := io.ReadAll(lr)
 	if err != nil {
 		return nil, resp.StatusCode, fmt.Errorf("failed to read response: %w", err)
 	}
