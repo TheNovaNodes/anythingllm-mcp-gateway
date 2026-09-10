@@ -373,7 +373,51 @@ func (d *DB) GetDocument(ctx context.Context, docID, workspace string, maxChars 
 		err = d.db.QueryRowContext(ctx, "SELECT path, title, '' AS workspace, content FROM docs_fts WHERE path = ? LIMIT 1", cleanID).Scan(&path, &title, &ws, &content)
 	}
 
-	// 2. Scoped match within workspace
+	// 2. Chunk assembly: if parent document was partitioned into chunks
+	if (err != nil || path == "") && !strings.Contains(cleanID, "#") {
+		baseName := filepathBase(cleanID)
+		var chunkQuery string
+		var cRows *sql.Rows
+		var cErr error
+
+		if d.hasWorkspaceCol && cleanWS != "" {
+			chunkQuery = "SELECT path, title, workspace, content FROM docs_fts WHERE lower(workspace) = ? AND (path LIKE ? OR path LIKE ?) ORDER BY path ASC"
+			cRows, cErr = d.db.QueryContext(ctx, chunkQuery, cleanWS, cleanID+"#%", "%/"+baseName+"#%")
+		} else {
+			if d.hasWorkspaceCol {
+				chunkQuery = "SELECT path, title, workspace, content FROM docs_fts WHERE path LIKE ? OR path LIKE ? ORDER BY path ASC"
+			} else {
+				chunkQuery = "SELECT path, title, '' AS workspace, content FROM docs_fts WHERE path LIKE ? OR path LIKE ? ORDER BY path ASC"
+			}
+			cRows, cErr = d.db.QueryContext(ctx, chunkQuery, cleanID+"#%", "%/"+baseName+"#%")
+		}
+
+		if cErr == nil {
+			var combinedContent strings.Builder
+			chunkCount := 0
+			for cRows.Next() {
+				var cp, ct, cws, cc string
+				if scanErr := cRows.Scan(&cp, &ct, &cws, &cc); scanErr == nil {
+					if chunkCount == 0 {
+						path = cleanID
+						title = strings.Split(ct, " (Part ")[0]
+						ws = cws
+					} else {
+						combinedContent.WriteString("\n\n")
+					}
+					combinedContent.WriteString(cc)
+					chunkCount++
+				}
+			}
+			cRows.Close()
+			if chunkCount > 0 {
+				content = combinedContent.String()
+				err = nil
+			}
+		}
+	}
+
+	// 3. Scoped match within workspace
 	if (err != nil || path == "") && cleanWS != "" {
 		baseName := filepathBase(cleanID)
 		baseStem := strings.TrimSuffix(baseName, filepath.Ext(baseName))
@@ -391,7 +435,7 @@ func (d *DB) GetDocument(ctx context.Context, docID, workspace string, maxChars 
 		}
 	}
 
-	// 3. Fallback when workspace is not specified
+	// 4. Fallback when workspace is not specified
 	if (err != nil || path == "") && cleanWS == "" {
 		baseName := filepathBase(cleanID)
 		if d.hasWorkspaceCol {
