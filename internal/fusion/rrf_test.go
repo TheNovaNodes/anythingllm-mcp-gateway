@@ -414,3 +414,53 @@ func TestIsOrgAllowed(t *testing.T) {
 		})
 	}
 }
+
+func TestGroupByDocument(t *testing.T) {
+	items := []SearchResultItem{
+		{
+			DocID:     "/root/projects/TheNovaNodes/agenda-sync/essay.md#chunk-1",
+			Title:     "essay.md (Part 2/4)",
+			Workspace: "thenovanodes-agenda-sync",
+			Score:     0.85,
+			Text:      "Best matching section about Kairos",
+		},
+		{
+			DocID:     "/root/projects/TheNovaNodes/agenda-sync/essay.md#chunk-0",
+			Title:     "essay.md (Part 1/4)",
+			Workspace: "thenovanodes-agenda-sync",
+			Score:     0.40,
+			Text:      "Introduction to time",
+		},
+		{
+			DocID:     "/root/projects/TheNovaNodes/agenda-sync/readme.md",
+			Title:     "readme.md",
+			Workspace: "thenovanodes-agenda-sync",
+			Score:     0.50,
+			Text:      "Project readme",
+		},
+	}
+
+	grouped := GroupByDocument(items)
+	if len(grouped) != 2 {
+		t.Fatalf("expected 2 grouped documents, got %d", len(grouped))
+	}
+
+	// First item should be essay.md with max score (0.85)
+	if grouped[0].DocID != "/root/projects/TheNovaNodes/agenda-sync/essay.md" {
+		t.Errorf("expected doc_id without chunk suffix, got %s", grouped[0].DocID)
+	}
+	if grouped[0].Title != "essay.md" {
+		t.Errorf("expected cleaned title 'essay.md', got %s", grouped[0].Title)
+	}
+	if grouped[0].Score != 0.85 {
+		t.Errorf("expected max score 0.85, got %f", grouped[0].Score)
+	}
+	if grouped[0].Text != "Best matching section about Kairos" {
+		t.Errorf("expected best matching text, got %q", grouped[0].Text)
+	}
+
+	// Empty input
+	if len(GroupByDocument(nil)) != 0 {
+		t.Error("expected empty result for nil")
+	}
+}

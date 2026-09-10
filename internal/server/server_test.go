@@ -238,3 +238,32 @@ func TestServer_ToolsPruned(t *testing.T) {
 	}
 }
 
+func TestServer_SearchMemory_GroupByDocument(t *testing.T) {
+	srv, ts, lexDB := setupTestEnvironment(t)
+	defer ts.Close()
+	defer lexDB.Close()
+
+	ctx := context.Background()
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]interface{}{
+		"query":    "architecture",
+		"group_by": "document",
+	}
+
+	res, err := srv.handleSearchMemory(ctx, req)
+	if err != nil || res.IsError {
+		t.Fatalf("search_memory with group_by=document failed: %v", err)
+	}
+
+	var output map[string]interface{}
+	text := res.Content[0].(mcp.TextContent).Text
+	if err := json.Unmarshal([]byte(text), &output); err != nil {
+		t.Fatalf("failed to parse output: %v", err)
+	}
+
+	if count, ok := output["count"].(float64); !ok || count < 0 {
+		t.Errorf("expected valid count in response: %+v", output)
+	}
+}
+
