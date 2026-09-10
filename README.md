@@ -35,17 +35,18 @@ The gateway exposes 3 high-level semantic memory tools:
   — `vector_weight` (float, optional): Weight multiplier for vector retrieval layer in RRF (default: 1.0).  
   — `lexical_weight` (float, optional): Weight multiplier for lexical FTS5 layer in RRF (default: 1.0).  
   — `min_vector_similarity` (float, optional): Cosine similarity cutoff for pure-vector hits (default: 0.55).  
-  — `max_context_chars` (int, optional): Maximum characters for paragraph context expansion (default: 4000).
+  — `max_context_chars` (int, optional): Maximum characters for paragraph context expansion (default: 4000).  
+  — `group_by` (string, optional): Result grouping strategy (`chunk` or `document`, default: `chunk`).
 
 - **`get_document`**  
-  Retrieves full raw document text directly from the local lexical SQLite index by document ID (<1ms latency, zero HTTP overhead).  
+  Retrieves full raw document text directly from the local lexical SQLite index by document ID (<1ms latency, zero HTTP overhead). Automatically reassembles chunked documents into monolithic content.  
   *Arguments:*  
   — `doc_id` (string, required): Unique document identifier or file path.  
   — `workspace` (string, optional): Target workspace slug filter.  
   — `max_chars` (int, optional): Truncation limit in characters (default: 20000).
 
 - **`gateway_health`**  
-  Diagnostics probe that verifies AnythingLLM REST API reachability, checks vector layer latency, tests lexical database integrity, and reports operational status.  
+  Diagnostics probe that verifies AnythingLLM REST API reachability, executes a live vector search probe, tests lexical database integrity, and reports operational status.  
   *Arguments:* None.
 
 
@@ -53,6 +54,7 @@ The gateway exposes 3 high-level semantic memory tools:
 
 ## ⚡ Key Features
 
+- **Semantic Document Chunking & Windowing:** Autonomous sliding-window tokenizer and chunker (512 tokens with 64-token overlap) preserving paragraph structure and attaching granular chunk metadata (`chunk_index`, `total_chunks`, `parent_doc_id`) for high-precision retrieval without context dilution.
 - **Multi-Tenant Organization Isolation:** Filters candidates by allowed organizational scope (`MG_ALLOWED_ORGS`) before RRF fusion, preventing data leakage across distinct projects.
 - **FTS5 Morphological Stemming & Wildcards:** Intelligent query expansion generating exact tokens, prefix wildcards (`word*`), and morphological stems for Russian inflections and English plurals/tenses, dramatically boosting lexical recall.
 - **Hybrid Synergy Multiplier:** Automatically amplifies the rank score (+25% bonus) of documents corroborated by both vector semantic and lexical FTS5 layers.
