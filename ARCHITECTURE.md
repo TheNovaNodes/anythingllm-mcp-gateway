@@ -59,6 +59,15 @@ Vector search results returned by AnythingLLM are filtered for distance anomalie
 1. Hits with cosine distance $\ge 0.85$ or score inversion anomalies ($r.\text{Score} \ge 0.99 \land r.\text{Distance} > 0.5$) are discarded prior to RRF processing.
 2. In the fusion layer, pure-vector candidates without lexical corroboration (`hasVec && !hasLex`) are pruned if $\text{VectorScore} < \text{MinPureVectorSimilarity}$ (configurable via `MG_MIN_VECTOR_SIMILARITY`, default $0.55$). This prevents uncalibrated dense embedding noise from injecting out-of-domain false positives.
 
+### 2.5. Semantic Document Chunking & Document-Level Aggregation
+Long documentation and markdown essays are segmented using a sliding window chunker (`internal/etl/chunk.go`):
+- **Window Geometry:** Target size of 512 tokens (~2048 characters) with an adaptive 64-token overlap (~256 characters) anchored on natural sentence and paragraph boundaries (`\n\n`, `\n`, `. `, `? `, `! `).
+- **Chunk Metadata:** Chunks are indexed into AnythingLLM and `lexical.db` with structured metadata anchors (`chunk_index`, `total_chunks`, `parent_doc_id`).
+- **Retrieval Modes (`group_by`):**
+  - `chunk`: Returns individual high-scoring semantic windows with surrounding paragraph expansion for precise localization.
+  - `document`: Aggregates chunk-level RRF scores to parent document level via `GroupByDocument`, returning the single most representative window per file to eliminate duplicate hits from the same document.
+- **Reassembly:** `get_document` automatically detects chunked indexes and concatenates all indexed segments in canonical ordinal order to reconstitute the original file.
+
 ### 2.6. FTS5-First Candidate Workspace Routing
 When `workspace` is omitted in `search_memory`:
 1. The local SQLite FTS5 index (`lexical.db`) executes first with sub-millisecond latency (<2ms).
