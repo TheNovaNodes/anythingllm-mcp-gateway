@@ -205,8 +205,8 @@ func TestDeriveWorkspaceFromPath(t *testing.T) {
 		path     string
 		expected string
 	}{
-		{"/root/projects/TheNovaNodes/anythingllm-mcp-gateway/README.md", "thenovanodes-anythingllm-mcp-gateway"},
-		{"/home/user/projects/thedoctormes-hue/polyscop/docs/arch.md", "thedoctormes-hue-polyscop"},
+		{"/opt/projects/TheNovaNodes/anythingllm-mcp-gateway/README.md", "thenovanodes-anythingllm-mcp-gateway"},
+		{"/opt/projects/thedoctormes-hue/polyscop/docs/arch.md", "thedoctormes-hue-polyscop"},
 		{"/random/path/not/matching/file.txt", ""},
 		{"projects/foo/bar/baz.go", "foo-bar"},
 	}

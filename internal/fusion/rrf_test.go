@@ -18,9 +18,9 @@ func TestDedupKey(t *testing.T) {
 		expected  string
 	}{
 		{"ws1", "protocols/agents/MANIFEST.md", "", "ws1:manifest"},
-		{"ws1", "/root/docs/README.md", "README", "ws1:readme"},
+		{"ws1", "/opt/docs/README.md", "README", "ws1:readme"},
 		{"", "Architecture.MD", "", "architecture"},
-		{"", "/root/projects/TheNovaNodes/mcp-router/README.md", "", "thenovanodes-mcp-router:readme"},
+		{"", "/opt/projects/TheNovaNodes/mcp-router/README.md", "", "thenovanodes-mcp-router:readme"},
 		{"docs\\win\\PATH.MD", "", "", "docs\\win\\path.md:"},
 	}
 
@@ -418,21 +418,21 @@ func TestIsOrgAllowed(t *testing.T) {
 func TestGroupByDocument(t *testing.T) {
 	items := []SearchResultItem{
 		{
-			DocID:     "/root/projects/TheNovaNodes/agenda-sync/essay.md#chunk-1",
+			DocID:     "/opt/projects/TheNovaNodes/agenda-sync/essay.md#chunk-1",
 			Title:     "essay.md (Part 2/4)",
 			Workspace: "thenovanodes-agenda-sync",
 			Score:     0.85,
 			Text:      "Best matching section about Kairos",
 		},
 		{
-			DocID:     "/root/projects/TheNovaNodes/agenda-sync/essay.md#chunk-0",
+			DocID:     "/opt/projects/TheNovaNodes/agenda-sync/essay.md#chunk-0",
 			Title:     "essay.md (Part 1/4)",
 			Workspace: "thenovanodes-agenda-sync",
 			Score:     0.40,
 			Text:      "Introduction to time",
 		},
 		{
-			DocID:     "/root/projects/TheNovaNodes/agenda-sync/readme.md",
+			DocID:     "/opt/projects/TheNovaNodes/agenda-sync/readme.md",
 			Title:     "readme.md",
 			Workspace: "thenovanodes-agenda-sync",
 			Score:     0.50,
@@ -446,7 +446,7 @@ func TestGroupByDocument(t *testing.T) {
 	}
 
 	// First item should be essay.md with max score (0.85)
-	if grouped[0].DocID != "/root/projects/TheNovaNodes/agenda-sync/essay.md" {
+	if grouped[0].DocID != "/opt/projects/TheNovaNodes/agenda-sync/essay.md" {
 		t.Errorf("expected doc_id without chunk suffix, got %s", grouped[0].DocID)
 	}
 	if grouped[0].Title != "essay.md" {
