@@ -199,3 +199,41 @@ func TestDB_ChunkAssembly(t *testing.T) {
 		t.Errorf("expected scoped combined content %q, got %q", expectedCombined, scopedParent.Content)
 	}
 }
+
+func TestDeriveWorkspaceFromPath(t *testing.T) {
+	cases := []struct {
+		path     string
+		expected string
+	}{
+		{"/root/projects/TheNovaNodes/anythingllm-mcp-gateway/README.md", "thenovanodes-anythingllm-mcp-gateway"},
+		{"/home/user/projects/thedoctormes-hue/polyscop/docs/arch.md", "thedoctormes-hue-polyscop"},
+		{"/random/path/not/matching/file.txt", ""},
+		{"projects/foo/bar/baz.go", "foo-bar"},
+	}
+
+	for _, tc := range cases {
+		actual := DeriveWorkspaceFromPath(tc.path)
+		if actual != tc.expected {
+			t.Errorf("DeriveWorkspaceFromPath(%q) = %q; expected %q", tc.path, actual, tc.expected)
+		}
+	}
+}
+
+func TestSlugFromRepo(t *testing.T) {
+	cases := []struct {
+		account  string
+		repo     string
+		expected string
+	}{
+		{"TheNovaNodes", "searxng-mcp-gateway", "thenovanodes-searxng-mcp-gateway"},
+		{"thedoctormes_hue", "doctorm_unify", "thedoctormes-hue-doctorm-unify"},
+		{" Org ", " Repo Name ", "org-repo-name"},
+	}
+
+	for _, tc := range cases {
+		actual := SlugFromRepo(tc.account, tc.repo)
+		if actual != tc.expected {
+			t.Errorf("SlugFromRepo(%q, %q) = %q; expected %q", tc.account, tc.repo, actual, tc.expected)
+		}
+	}
+}
