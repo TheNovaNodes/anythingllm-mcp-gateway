@@ -19,3 +19,4 @@ Thank you for your interest in contributing to the **AnythingLLM Semantic Memory
 - **Testing:** All new features or modifications must include comprehensive unit tests. Run `make test` (`go test -v -race ./...`) to ensure 100% pass rate and zero race conditions.
 - **Documentation:** When modifying MCP tool schemas or algorithms, update `README.md` and `ARCHITECTURE.md`.
 - **Strict Git Flow (Правила Крови):** NEVER push directly to `main` or `master`. Always create a dedicated branch and submit a PR.
+

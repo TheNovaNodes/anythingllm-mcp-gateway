@@ -10,6 +10,7 @@ last_verified: 2026-09-05
 
 # AnythingLLM Semantic Memory Gateway MCP Server 🧠
 
+[![CI Test Suite](https://github.com/TheNovaNodes/anythingllm-mcp-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/TheNovaNodes/anythingllm-mcp-gateway/actions)
 [![Go Version](https://img.shields.io/badge/go-1.25+-00ADD8.svg)](https://golang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![MCP Server](https://img.shields.io/badge/MCP--Server-available-green)](https://modelcontextprotocol.io/)
@@ -112,7 +113,7 @@ anythingllm-sync -once
   *Default:* `default`
 - **`MG_LEXICAL_DB`**  
   Optional path to SQLite database for FTS5 lexical search.  
-  *Default:* `./lexical.db` (auto-detects `/root/projects/TheNovaNodes/ops/shared/anythingllm-sync/lexical.db` if running on host cluster)
+  *Default:* `./lexical.db` (auto-detects `/opt/projects/TheNovaNodes/ops/shared/anythingllm-sync/lexical.db` if running on host cluster)
 - **`MG_LEXICAL_MIN_SCORE`**  
   Minimum lexical score threshold (float, default: `0.0`).
 - **`MG_MIN_VECTOR_SIMILARITY`**  

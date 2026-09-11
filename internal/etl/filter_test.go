@@ -9,18 +9,18 @@ func TestIsBlacklisted(t *testing.T) {
 		path     string
 		expected bool
 	}{
-		{"/root/projects/repo/.git/HEAD", true},
-		{"/root/projects/repo/node_modules/package.json", true},
-		{"/root/projects/repo/.venv/lib/python3.12/site.py", true},
-		{"/root/projects/repo/.agents/bot/file.md", true},
-		{"/root/projects/repo/scratch/test.md", true},
-		{"/root/projects/repo/tmp/data.json", true},
-		{"/root/projects/repo/.pytest_cache/v/cache", true},
-		{"/root/projects/TheNovaNodes/agent-vault-f04/readme.txt", true},
-		{"/root/projects/TheNovaNodes/searxng-poc/main.go", true},
-		{"/root/projects/repo/docs/README.md", false},
-		{"/root/projects/repo/ARCHITECTURE.md", false},
-		{"/root/projects/repo/src/main.go", false},
+		{"/opt/projects/repo/.git/HEAD", true},
+		{"/opt/projects/repo/node_modules/package.json", true},
+		{"/opt/projects/repo/.venv/lib/python3.12/site.py", true},
+		{"/opt/projects/repo/.agents/bot/file.md", true},
+		{"/opt/projects/repo/scratch/test.md", true},
+		{"/opt/projects/repo/tmp/data.json", true},
+		{"/opt/projects/repo/.pytest_cache/v/cache", true},
+		{"/opt/projects/TheNovaNodes/agent-vault-f04/readme.txt", true},
+		{"/opt/projects/TheNovaNodes/searxng-poc/main.go", true},
+		{"/opt/projects/repo/docs/README.md", false},
+		{"/opt/projects/repo/ARCHITECTURE.md", false},
+		{"/opt/projects/repo/src/main.go", false},
 	}
 
 	for _, tc := range tests {

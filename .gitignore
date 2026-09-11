@@ -28,3 +28,8 @@ bin/
 *.test
 *.out
 vendor/
+coverage.out
+*.prof
+.env
+.env.*
+!.env.example

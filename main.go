@@ -59,7 +59,7 @@ func main() {
 	timeoutSec := getEnvInt("MG_SEARCH_TIMEOUT", 10)
 
 	defaultLexDB := "./lexical.db"
-	if legacyPath := "/root/projects/TheNovaNodes/ops/shared/anythingllm-sync/lexical.db"; fileExists(legacyPath) {
+	if legacyPath := "/opt/projects/TheNovaNodes/ops/shared/anythingllm-sync/lexical.db"; fileExists(legacyPath) {
 		defaultLexDB = legacyPath
 	}
 	lexicalDBPath := getEnv("MG_LEXICAL_DB", defaultLexDB)
