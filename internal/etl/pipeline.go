@@ -275,27 +275,3 @@ func (p *Pipeline) uploadChunks(ctx context.Context, slug string, chunks []Chunk
 
 	return locations, nil
 }
-
-func (p *Pipeline) uploadDocument(ctx context.Context, slug, filePath, content string) (string, error) {
-	chunks := []Chunk{
-		{
-			Index:      0,
-			Total:      1,
-			ChunkID:    filePath,
-			ParentPath: filePath,
-			Title:      filepath.Base(filePath),
-			Content:    content,
-		},
-	}
-	locs, err := p.uploadChunks(ctx, slug, chunks)
-	if err != nil {
-		if len(locs) > 0 {
-			return locs[0], err
-		}
-		return "", err
-	}
-	if len(locs) == 0 {
-		return "", fmt.Errorf("no location returned")
-	}
-	return locs[0], nil
-}
