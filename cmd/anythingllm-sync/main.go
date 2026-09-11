@@ -12,6 +12,14 @@ import (
 	"github.com/TheNovaNodes/anythingllm-mcp-gateway/internal/etl"
 )
 
+func dirExists(path string) bool {
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
 func main() {
 	var (
 		projectsDir string
@@ -25,12 +33,20 @@ func main() {
 
 	defaultProjects := os.Getenv("PROJECTS_DIR")
 	if defaultProjects == "" {
-		defaultProjects = "/root/projects"
+		if dirExists("/root/projects") {
+			defaultProjects = "/root/projects"
+		} else {
+			defaultProjects = "."
+		}
 	}
 
 	defaultState := os.Getenv("STATE_DIR")
 	if defaultState == "" {
-		defaultState = "/root/projects/TheNovaNodes/ops/shared/anythingllm-sync"
+		if dirExists("/root/projects/TheNovaNodes/ops/shared/anythingllm-sync") {
+			defaultState = "/root/projects/TheNovaNodes/ops/shared/anythingllm-sync"
+		} else {
+			defaultState = "./state"
+		}
 	}
 
 	defaultBaseURL := os.Getenv("ANYTHINGLLM_BASE_URL")
