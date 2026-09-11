@@ -1,0 +1,59 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Build Cross-Platform Binaries
+        run: |
+          mkdir -p dist
+          TAG_NAME="${{ github.ref_name }}"
+          PLATFORMS=("linux/amd64" "linux/arm64" "darwin/amd64" "darwin/arm64")
+
+          for PLATFORM in "${PLATFORMS[@]}"; do
+            GOOS="${PLATFORM%/*}"
+            GOARCH="${PLATFORM#*/}"
+            BIN_DIR="build_${GOOS}_${GOARCH}"
+            mkdir -p "${BIN_DIR}"
+
+            echo "Building for ${GOOS}/${GOARCH}..."
+            CGO_ENABLED=0 GOOS="${GOOS}" GOARCH="${GOARCH}" go build -v -ldflags="-s -w" -o "${BIN_DIR}/anythingllm-gateway" .
+            CGO_ENABLED=0 GOOS="${GOOS}" GOARCH="${GOARCH}" go build -v -ldflags="-s -w" -o "${BIN_DIR}/anythingllm-sync" ./cmd/anythingllm-sync
+
+            ARCHIVE_NAME="anythingllm-mcp-gateway_${TAG_NAME}_${GOOS}_${GOARCH}.tar.gz"
+            tar -czf "dist/${ARCHIVE_NAME}" -C "${BIN_DIR}" anythingllm-gateway anythingllm-sync
+            rm -rf "${BIN_DIR}"
+          done
+
+          cd dist
+          sha256sum *.tar.gz > checksums.txt
+          cd ..
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/checksums.txt
+          generate_release_notes: true
