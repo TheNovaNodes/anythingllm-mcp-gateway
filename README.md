@@ -112,7 +112,7 @@ anythingllm-sync -once
   *Default:* `default`
 - **`MG_LEXICAL_DB`**  
   Optional path to SQLite database for FTS5 lexical search.  
-  *Default:* `/root/projects/TheNovaNodes/ops/shared/anythingllm-sync/lexical.db`
+  *Default:* `./lexical.db` (auto-detects `/root/projects/TheNovaNodes/ops/shared/anythingllm-sync/lexical.db` if running on host cluster)
 - **`MG_LEXICAL_MIN_SCORE`**  
   Minimum lexical score threshold (float, default: `0.0`).
 - **`MG_MIN_VECTOR_SIMILARITY`**  

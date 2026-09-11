@@ -41,6 +41,14 @@ func getEnvFloat(key string, defaultVal float64) float64 {
 	return defaultVal
 }
 
+func fileExists(path string) bool {
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir() && info.Size() > 0
+}
+
 func main() {
 	almBase := getEnv("MG_ALM_BASE", getEnv("ANYTHINGLLM_BASE_URL", "http://127.0.0.1:3002/api/v1"))
 	apiKey := getEnv("MG_API_KEY", getEnv("ANYTHINGLLM_API_KEY", ""))
@@ -50,7 +58,11 @@ func main() {
 	maxInflight := int64(getEnvInt("MG_VECTOR_MAX_INFLIGHT", 4))
 	timeoutSec := getEnvInt("MG_SEARCH_TIMEOUT", 10)
 
-	lexicalDBPath := getEnv("MG_LEXICAL_DB", "/root/projects/TheNovaNodes/ops/shared/anythingllm-sync/lexical.db")
+	defaultLexDB := "./lexical.db"
+	if legacyPath := "/root/projects/TheNovaNodes/ops/shared/anythingllm-sync/lexical.db"; fileExists(legacyPath) {
+		defaultLexDB = legacyPath
+	}
+	lexicalDBPath := getEnv("MG_LEXICAL_DB", defaultLexDB)
 	lexicalMinScore := getEnvFloat("MG_LEXICAL_MIN_SCORE", 0.0)
 
 	almClient := alm.NewClient(alm.ClientConfig{
