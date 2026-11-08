@@ -12,6 +12,13 @@ import (
 	"github.com/TheNovaNodes/anythingllm-mcp-gateway/internal/etl"
 )
 
+var (
+	// Version is injected at build time via -ldflags
+	Version = "dev"
+	// CommitSHA is injected at build time via -ldflags
+	CommitSHA = "unknown"
+)
+
 func dirExists(path string) bool {
 	if path == "" {
 		return false
@@ -21,6 +28,13 @@ func dirExists(path string) bool {
 }
 
 func main() {
+	for _, arg := range os.Args[1:] {
+		if arg == "--version" || arg == "-v" || arg == "version" {
+			log.Printf("anythingllm-sync version %s (commit: %s)\n", Version, CommitSHA)
+			return
+		}
+	}
+
 	var (
 		projectsDir string
 		stateDir    string

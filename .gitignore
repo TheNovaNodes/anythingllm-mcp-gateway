@@ -12,6 +12,7 @@ venv.bak/
 .env
 logs/
 bin/
+.deploy_rollback_capsule/
 *.out
 *.egg-info/
 
