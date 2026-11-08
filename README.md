@@ -97,6 +97,24 @@ anythingllm-gateway < /dev/null
 anythingllm-sync -once
 ```
 
+### 🚀 Production Deployment (5-Echelon Automated Gate)
+In accordance with TheNovaNodes ecosystem standards, production deployment is orchestrated via `./scripts/deploy.sh`:
+
+```bash
+# Execute standard 5-echelon deployment
+./scripts/deploy.sh
+
+# Dry-run validation (build and test without binary swap)
+./scripts/deploy.sh --dry-run
+```
+
+**Deployment Echelons:**
+1. **🛡️ Échelon 0: Pre-Flight Guard & Rollback Capsule:** Toolchain checks, resolves `TARGET_COMMIT`, and archives working binary into `.deploy_rollback_capsule/`.
+2. **🧱 Échelon 1: Production Isolation Probe:** Executes full test suite (`go test ./...`) and ensures git working tree cleanliness.
+3. **🔄 Échelon 2: Atomic Switch & Graceful Shift:** Atomically installs candidate binaries into `bin/anythingllm-gateway` and `bin/anythingllm-sync`.
+4. **🪞 Échelon 3: Identity & Truth Probe:** Queries `--version` to verify runtime commit SHA matches `git rev-parse HEAD`.
+5. **🔍 Échelon 4: Deep Smoke Probe & Rollback Gate:** Issues MCP stdio `initialize` handshake probe. Automatic instant rollback (`trap rollback ERR EXIT`) on any anomaly.
+
 ---
 
 ## ⚙️ Configuration & Environment Variables

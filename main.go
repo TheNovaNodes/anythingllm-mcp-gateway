@@ -16,6 +16,13 @@ import (
 	mcpserver "github.com/mark3labs/mcp-go/server"
 )
 
+var (
+	// Version is injected at build time via -ldflags
+	Version = "dev"
+	// CommitSHA is injected at build time via -ldflags
+	CommitSHA = "unknown"
+)
+
 func getEnv(key, defaultVal string) string {
 	if val := os.Getenv(key); val != "" {
 		return val
@@ -50,6 +57,13 @@ func fileExists(path string) bool {
 }
 
 func main() {
+	for _, arg := range os.Args[1:] {
+		if arg == "--version" || arg == "-v" || arg == "version" {
+			fmt.Printf("anythingllm-mcp-gateway version %s (commit: %s)\n", Version, CommitSHA)
+			return
+		}
+	}
+
 	almBase := getEnv("MG_ALM_BASE", getEnv("ANYTHINGLLM_BASE_URL", "http://127.0.0.1:3002/api/v1"))
 	apiKey := getEnv("MG_API_KEY", getEnv("ANYTHINGLLM_API_KEY", ""))
 	tokenFile := os.Getenv("MG_TOKEN_FILE")
